@@ -212,6 +212,22 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
 
         <button id="profileBtn" class="green" disabled>Generate Terrain Profile</button>
         <button id="profileExcelBtn" class="secondary" disabled>Download Elevations to Excel</button>
+        <button id="profileCadBtn" class="secondary" disabled>Download Profile to CAD (DXF)</button>
+        <details style="margin-top:12px">
+          <summary style="cursor:pointer;font-size:14px;font-weight:600">CAD profile settings</summary>
+          <label for="profileCadHScale">Horizontal scale 1:</label>
+          <input id="profileCadHScale" type="number" value="2000" min="1" step="1">
+          <label for="profileCadVScale">Vertical scale 1:</label>
+          <input id="profileCadVScale" type="number" value="200" min="1" step="1">
+          <label for="profileCadChainageGrid">Chainage grid (m)</label>
+          <input id="profileCadChainageGrid" type="number" value="250" min="1" step="1">
+          <label for="profileCadRlGrid">Elevation grid (m)</label>
+          <input id="profileCadRlGrid" type="number" value="5" min="0.1" step="0.1">
+          <label for="profileCadDatum">Datum RL (m)</label>
+          <input id="profileCadDatum" type="number" placeholder="Automatic" step="0.1">
+          <p class="small">Scales control the drawing proportions. The CAD profile uses the same sampled points as Excel.</p>
+        </details>
+        <div id="profileCadStatus" class="small" role="status" aria-live="polite" style="margin-top:10px">Generate a profile to enable CAD download.</div>
         <div id="profileExcelStatus" class="small" role="status" aria-live="polite" style="margin-top:10px">Generate a profile to enable Excel download.</div>
 
         <div id="profileStatus" class="status">
@@ -273,6 +289,8 @@ let profileRequestId = 0;
 let profileExportId = 0;
 const profileExcelBtn = document.getElementById("profileExcelBtn");
 const profileExcelStatus = document.getElementById("profileExcelStatus");
+const profileCadBtn = document.getElementById("profileCadBtn");
+const profileCadStatus = document.getElementById("profileCadStatus");
 
 // MAP
 const map = L.map("map").setView([24.45, 54.38], 6);
@@ -427,6 +445,8 @@ fileInput.addEventListener("change",async()=>{
   profileRequestId++;
   profileExportId++;
   profileExcelBtn.disabled=true;
+  profileCadBtn.disabled=true;
+  profileCadStatus.textContent="Generate a profile to enable CAD download.";
   profileExcelStatus.textContent="Generate a profile to enable Excel download.";
   document.getElementById("profileStats").classList.add("hidden");
   profileStatus.className="status";
@@ -624,6 +644,8 @@ function resetProfileExport(){
   profilePoints=[];
   profileMetadata=null;
   profileExcelBtn.disabled=true;
+  profileCadBtn.disabled=true;
+  profileCadStatus.textContent="Generate a profile to enable CAD download.";
   profileExportId++;
   profileExcelStatus.textContent="Generate a profile to enable Excel download.";
   if(profileChart){profileChart.destroy();profileChart=null;}
@@ -705,6 +727,10 @@ profileBtn.addEventListener("click",async()=>{
       ". Actual interval: "+(actualInterval===null?"not reported":actualInterval+" m")+"."+
       (spacingChanged?" Requested: "+requestedInterval+" m. The server returned a different sampling gap; Excel will use the returned samples.":"");
     profileExcelBtn.disabled=false;
+    profileCadBtn.disabled=!elevations.length;
+    profileCadStatus.textContent=elevations.length?
+      "Editable DXF with ground profile, chainage grid and elevation labels.":
+      "CAD profile unavailable: no elevations were returned.";
     profileExcelStatus.textContent="Excel includes every returned sample, its actual gap and elevation. Missing elevations remain blank.";
 
     // If no map preview was loaded, draw profile sample line on the map.
@@ -823,6 +849,142 @@ profileExcelBtn.addEventListener("click",async()=>{
     if(exportId===profileExportId) profileExcelStatus.textContent="Excel export failed: "+err.message;
   }finally{
     if(exportId===profileExportId) profileExcelBtn.disabled=!profileMetadata;
+  }
+});
+
+// CAD PROFILE EXPORT: drawing X is local chainage; drawing Y is scaled RL above datum.
+function readProfileCadSettings(){
+  const read=(id,label)=>{
+    const value=profileNumber(document.getElementById(id).value);
+    if(value===null || value<=0) throw new Error(label+" must be a positive number.");
+    return value;
+  };
+  const rawDatum=document.getElementById("profileCadDatum").value.trim();
+  const datum=rawDatum===""?null:profileNumber(rawDatum);
+  if(rawDatum!=="" && datum===null) throw new Error("Enter a numeric datum RL or leave it blank for automatic datum.");
+  return {hScale:read("profileCadHScale","Horizontal scale"),
+    vScale:read("profileCadVScale","Vertical scale"),
+    chainageGrid:read("profileCadChainageGrid","Chainage grid"),
+    rlGrid:read("profileCadRlGrid","Elevation grid"),datum};
+}
+function profileCadText(value){
+  // DXF Unicode escapes preserve names while keeping the file ASCII compatible.
+  return String(value ?? "").replace(/[\r\n\x00-\x1F]/g," ")
+    .replace(/\\/g,"/").replace(/%%/g,"% %")
+    .replace(/[^\x20-\x7E]/g,c=>"\\U+"+c.charCodeAt(0).toString(16).toUpperCase().padStart(4,"0"));
+}
+function createProfileDxf(points,meta,settings){
+  if(!points.length) throw new Error("Generate a terrain profile first.");
+  const valid=points.filter(p=>p.elevation_m!==null && Number.isFinite(p.elevation_m));
+  if(!valid.length) throw new Error("No elevation values are available for a CAD profile.");
+  const start=points[0].chainage_m,finish=points[points.length-1].chainage_m;
+  const minRl=Math.min(...valid.map(p=>p.elevation_m)),maxRl=Math.max(...valid.map(p=>p.elevation_m));
+  const exaggeration=settings.hScale/settings.vScale;
+  const datum=settings.datum ?? (Math.floor(minRl/settings.rlGrid)*settings.rlGrid-settings.rlGrid);
+  if(datum>minRl) throw new Error("Datum RL must be at or below the lowest elevation ("+minRl+" m).");
+  const topRl=Math.ceil(maxRl/settings.rlGrid)*settings.rlGrid+settings.rlGrid;
+  const xSpan=Math.max(finish-start,settings.chainageGrid);
+  const ySpan=(topRl-datum)*exaggeration;
+  if(!Number.isFinite(ySpan) || !Number.isFinite(xSpan) || ySpan<=0)
+    throw new Error("The CAD drawing extent is invalid. Check scales and datum.");
+  if(xSpan/settings.chainageGrid>4000 || (topRl-datum)/settings.rlGrid>1000)
+    throw new Error("The grid is too dense. Increase the chainage or elevation grid spacing.");
+  const textHeight=2.5*settings.hScale/1000;
+  if(!Number.isFinite(textHeight) || textHeight<=0) throw new Error("Invalid CAD text height.");
+  const number=v=>{if(!Number.isFinite(v))throw new Error("Invalid CAD coordinate.");return Number(v.toFixed(8)).toString();};
+  const pairs=[];
+  const put=(...values)=>pairs.push(...values.map(String));
+  const layers={PROFILE_GROUND:1,PROFILE_SAMPLES:3,PROFILE_GRID:8,PROFILE_BORDER:7,PROFILE_TEXT:7};
+  put(0,"SECTION",2,"HEADER",9,"$ACADVER",1,"AC1015",9,"$INSUNITS",70,6,
+    9,"$MEASUREMENT",70,1,9,"$LUNITS",70,2,9,"$LUPREC",70,3,9,"$PDMODE",70,3,
+    9,"$PDSIZE",40,number(textHeight*.35),0,"ENDSEC");
+  put(0,"SECTION",2,"TABLES",0,"TABLE",2,"LTYPE",5,"A0",330,0,100,"AcDbSymbolTable",70,1,
+    0,"LTYPE",5,"A1",330,"A0",100,"AcDbSymbolTableRecord",100,"AcDbLinetypeTableRecord",2,"CONTINUOUS",70,0,3,"Solid line",72,65,73,0,40,0,0,"ENDTAB",
+    0,"TABLE",2,"LAYER",5,"B0",330,0,100,"AcDbSymbolTable",70,Object.keys(layers).length+1);
+  let layerHandle=177;
+  for(const [name,color] of Object.entries({"0":7,...layers}))
+    put(0,"LAYER",5,(layerHandle++).toString(16).toUpperCase(),330,"B0",100,"AcDbSymbolTableRecord",100,"AcDbLayerTableRecord",2,name,70,0,62,color,6,"CONTINUOUS");
+  put(0,"ENDTAB",0,"TABLE",2,"STYLE",5,"C0",330,0,100,"AcDbSymbolTable",70,1,0,"STYLE",5,"C1",330,"C0",100,"AcDbSymbolTableRecord",100,"AcDbTextStyleTableRecord",
+    2,"STANDARD",70,0,40,0,41,1,50,0,71,0,42,number(textHeight),3,"txt",4,"",0,"ENDTAB",0,"ENDSEC",0,"SECTION",2,"ENTITIES");
+  const line=(layer,x1,y1,x2,y2)=>put(0,"LINE",100,"AcDbEntity",8,layer,100,"AcDbLine",
+    10,number(x1),20,number(y1),30,0,11,number(x2),21,number(y2),31,0);
+  const text=(content,x,y,size=textHeight,rotation=0)=>put(0,"TEXT",100,"AcDbEntity",8,"PROFILE_TEXT",100,"AcDbText",
+    10,number(x),20,number(y),30,0,40,number(size),1,profileCadText(content),50,number(rotation),7,"STANDARD",100,"AcDbText");
+  const polyline=coords=>{
+    if(coords.length<2)return;
+    put(0,"LWPOLYLINE",100,"AcDbEntity",8,"PROFILE_GROUND",100,"AcDbPolyline",90,coords.length,70,0);
+    coords.forEach(p=>put(10,number(p[0]),20,number(p[1])));
+  };
+  // Break the ground line at each missing elevation instead of joining across it.
+  let segment=[];
+  for(const p of points){
+    if(p.elevation_m===null || !Number.isFinite(p.elevation_m)){
+      polyline(segment);segment=[];continue;
+    }
+    const x=p.chainage_m-start,y=(p.elevation_m-datum)*exaggeration;
+    segment.push([x,y]);
+    put(0,"POINT",100,"AcDbEntity",8,"PROFILE_SAMPLES",100,"AcDbPoint",10,number(x),20,number(y),30,0);
+  }
+  polyline(segment);
+  const chainages=[start];
+  for(let kp=(Math.floor(start/settings.chainageGrid)+1)*settings.chainageGrid;kp<finish-1e-8;kp+=settings.chainageGrid)chainages.push(kp);
+  if(finish>start)chainages.push(finish);
+  let lastLabelX=-Infinity;
+  for(const kp of chainages){
+    const x=kp-start;
+    line("PROFILE_GRID",x,0,x,ySpan);
+    line("PROFILE_BORDER",x,0,x,-textHeight);
+    // Avoid overlapping labels at a short final gap; endpoint KP is in the title.
+    if(x-lastLabelX>=textHeight*13){text(profileKp(kp),x,-textHeight*4);lastLabelX=x;}
+  }
+  const labelGap=Math.max(settings.rlGrid,Math.ceil(textHeight*2/(settings.rlGrid*exaggeration))*settings.rlGrid);
+  let lastRlLabel=-Infinity;
+  const addRl=rl=>{
+    const y=(rl-datum)*exaggeration;
+    line("PROFILE_GRID",0,y,xSpan,y);
+    if(rl-lastRlLabel>=labelGap-1e-8){text(Number(rl.toFixed(3)).toString(),-textHeight*13,y-textHeight*.35);lastRlLabel=rl;}
+  };
+  addRl(datum);
+  for(let rl=(Math.floor(datum/settings.rlGrid)+1)*settings.rlGrid;rl<=topRl+1e-8;rl+=settings.rlGrid)addRl(rl);
+  line("PROFILE_BORDER",0,0,xSpan,0);line("PROFILE_BORDER",0,ySpan,xSpan,ySpan);
+  line("PROFILE_BORDER",0,0,0,ySpan);line("PROFILE_BORDER",xSpan,0,xSpan,ySpan);
+  text("ELEVATION / RL (m)",-textHeight*16,ySpan*.25,textHeight,90);
+  text("CHAINAGE (m) / KP",0,-textHeight*8);
+  const title=meta.projectNo?meta.projectNo+" - GROUND PROFILE":"GROUND PROFILE";
+  text(title,0,ySpan+textHeight*7,textHeight*1.5);
+  text("KP "+profileKp(start)+" to "+profileKp(finish)+" | Source: "+meta.source,0,ySpan+textHeight*4);
+  const notes=[
+    meta.projectName || meta.filename,
+    "H 1:"+settings.hScale+" / V 1:"+settings.vScale+" | Vertical exaggeration: "+Number(exaggeration.toFixed(4))+"x | Datum RL: "+Number(datum.toFixed(3))+" m",
+    "Requested sample gap: "+meta.requestedInterval+" m | Returned nominal gap: "+(meta.actualInterval===null?"not reported":meta.actualInterval+" m")+" | Samples: "+points.length,
+    "Grid: chainage "+settings.chainageGrid+" m / RL "+settings.rlGrid+" m | Profile generated (UTC): "+meta.generatedAt,
+    "Drawing X = chainage minus "+Number(start.toFixed(3))+" m; Y = (elevation - datum) x "+Number(exaggeration.toFixed(4))+". Profile view, not georeferenced plan coordinates.",
+    "Missing elevations: "+(points.length-valid.length)+". Ground line breaks at missing samples. No resampling or interpolation.",
+    "Trial DEM elevations; use detailed topographic survey RL for engineering design."
+  ];
+  notes.forEach((note,i)=>text(note,0,-textHeight*(12+i*3)));
+  put(0,"ENDSEC",0,"EOF");
+  return pairs.join("\r\n")+"\r\n";
+}
+profileCadBtn.addEventListener("click",()=>{
+  if(!profileMetadata || !profilePoints.length)return;
+  profileCadBtn.disabled=true;
+  try{
+    const meta={...profileMetadata};
+    const settings=readProfileCadSettings();
+    const drawing=createProfileDxf(profilePoints,meta,settings);
+    const blob=new Blob([drawing],{type:"application/dxf"});
+    const url=URL.createObjectURL(blob);
+    const base=String(meta.projectNo || meta.filename.replace(/\.[^.]+$/,""))
+      .replace(/[^a-zA-Z0-9_-]/g,"_").slice(0,80) || "Alignment";
+    const a=document.createElement("a");a.href=url;a.download=base+"_Ground_Profile.dxf";
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+    profileCadStatus.textContent="DXF downloaded. Open in AutoCAD and use Zoom Extents. H 1:"+settings.hScale+" / V 1:"+settings.vScale+".";
+  }catch(err){
+    profileCadStatus.textContent="CAD export failed: "+err.message;
+  }finally{
+    profileCadBtn.disabled=!profileMetadata || !profilePoints.some(p=>p.elevation_m!==null);
   }
 });
 
