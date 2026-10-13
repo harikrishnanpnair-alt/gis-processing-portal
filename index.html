@@ -211,6 +211,8 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
         </select>
 
         <button id="profileBtn" class="green" disabled>Generate Terrain Profile</button>
+        <button id="profileExcelBtn" class="secondary" disabled>Download Elevations to Excel</button>
+        <div id="profileExcelStatus" class="small" role="status" aria-live="polite" style="margin-top:10px">Generate a profile to enable Excel download.</div>
 
         <div id="profileStatus" class="status">
           Upload a KMZ/KML containing a line alignment.
@@ -266,6 +268,11 @@ let cadLayer = null;
 let profileMarker = null;
 let profileChart = null;
 let profilePoints = [];
+let profileMetadata = null;
+let profileRequestId = 0;
+let profileExportId = 0;
+const profileExcelBtn = document.getElementById("profileExcelBtn");
+const profileExcelStatus = document.getElementById("profileExcelStatus");
 
 // MAP
 const map = L.map("map").setView([24.45, 54.38], 6);
@@ -416,6 +423,11 @@ fileInput.addEventListener("change",async()=>{
 
   if(profileChart){profileChart.destroy();profileChart=null;}
   profilePoints=[];
+  profileMetadata=null;
+  profileRequestId++;
+  profileExportId++;
+  profileExcelBtn.disabled=true;
+  profileExcelStatus.textContent="Generate a profile to enable Excel download.";
   document.getElementById("profileStats").classList.add("hidden");
   profileStatus.className="status";
   profileStatus.textContent="Upload a KMZ/KML containing a line alignment.";
@@ -602,52 +614,215 @@ processBtn.addEventListener("click",async()=>{
 });
 
 // PROFILE
+function profileNumber(value){
+  if((typeof value!=="number" && typeof value!=="string") || String(value).trim()==="") return null;
+  const number=Number(value);
+  return Number.isFinite(number)?number:null;
+}
+
+function resetProfileExport(){
+  profilePoints=[];
+  profileMetadata=null;
+  profileExcelBtn.disabled=true;
+  profileExportId++;
+  profileExcelStatus.textContent="Generate a profile to enable Excel download.";
+  if(profileChart){profileChart.destroy();profileChart=null;}
+  if(profileMarker){map.removeLayer(profileMarker);profileMarker=null;}
+  document.getElementById("profileStats").classList.add("hidden");
+}
+
+for(const id of ["profileInterval","profileDataset"]){
+  document.getElementById(id).addEventListener("change",()=>{
+    profileRequestId++;
+    resetProfileExport();
+    profileStatus.className="status";
+    profileStatus.textContent="Profile settings changed. Generate the profile again before exporting.";
+    profileBtn.disabled=!(currentAnalysis && currentAnalysis.profile_available &&
+      (currentType==="kmz" || currentType==="kml"));
+  });
+}
+
 profileBtn.addEventListener("click",async()=>{
   const file=fileInput.files[0];
   if(!file || !(currentType==="kmz"||currentType==="kml")) return;
-
+  const intervalInput=document.getElementById("profileInterval");
+  const requestedInterval=profileNumber(intervalInput.value);
+  if(requestedInterval===null || requestedInterval<5){
+    profileStatus.className="status error";
+    profileStatus.textContent="Enter a sample interval of at least 5 metres.";
+    return;
+  }
+  const requestId=++profileRequestId;
+  const requestedDataset=document.getElementById("profileDataset").value;
+  const projectNo=document.getElementById("projectNo").value.trim();
+  const projectName=document.getElementById("projectName").value.trim();
+  resetProfileExport();
   profileBtn.disabled=true;
   profileStatus.className="status";
   profileStatus.innerHTML='<span class="spinner"></span>Sampling alignment and requesting online DEM elevations…';
 
   const fd=new FormData();
   fd.append("file",file);
-  fd.append("interval_m",document.getElementById("profileInterval").value || "25");
-  fd.append("dataset",document.getElementById("profileDataset").value);
+  fd.append("interval_m",String(requestedInterval));
+  fd.append("dataset",requestedDataset);
 
   try{
     const r=await fetch(API+"/profile-kmz",{method:"POST",body:fd});
     const data=await r.json();
+    if(requestId!==profileRequestId || file!==fileInput.files[0]) return;
     if(!r.ok) throw new Error(data.detail || "Profile generation failed.");
+    if(!Array.isArray(data.points) || !data.points.length) throw new Error("No profile samples were returned.");
+    const points=data.points.map((p,i)=>{
+      const chainage=profileNumber(p.chainage_m);
+      if(chainage===null || chainage<0) throw new Error("Invalid chainage at sample "+(i+1)+".");
+      if(i && chainage<=profileNumber(data.points[i-1].chainage_m))
+        throw new Error("Profile samples must have increasing chainage.");
+      return {...p,chainage_m:chainage,elevation_m:profileNumber(p.elevation_m),
+        lat:profileNumber(p.lat),lon:profileNumber(p.lon)};
+    });
+    profilePoints=points;
+    const elevations=points.map(p=>p.elevation_m).filter(v=>v!==null);
+    const actualInterval=profileNumber(data.actual_interval_m) ??
+      (points.length>1?points[1].chainage_m-points[0].chainage_m:null);
+    const totalLengthKm=profileNumber(data.total_length_km) ?? points[points.length-1].chainage_m/1000;
+    profileMetadata={projectNo,projectName,filename:file.name,
+      requestedInterval,actualInterval,totalLengthKm,
+      source:String(data.elevation_source || requestedDataset),
+      generatedAt:new Date().toISOString(),sampleCount:points.length,
+      minElevation:elevations.length?Math.min(...elevations):null,
+      maxElevation:elevations.length?Math.max(...elevations):null};
 
-    profilePoints=data.points || [];
-    if(!profilePoints.length) throw new Error("No profile samples were returned.");
-
-    document.getElementById("profileLength").textContent=data.total_length_km.toFixed(3)+" km";
-    document.getElementById("profileSamples").textContent=data.sample_count;
-    document.getElementById("profileMin").textContent=data.min_elevation_m===null?"—":data.min_elevation_m.toFixed(1)+" m";
-    document.getElementById("profileMax").textContent=data.max_elevation_m===null?"—":data.max_elevation_m.toFixed(1)+" m";
+    document.getElementById("profileLength").textContent=totalLengthKm.toFixed(3)+" km";
+    document.getElementById("profileSamples").textContent=points.length;
+    document.getElementById("profileMin").textContent=profileMetadata.minElevation===null?"—":profileMetadata.minElevation.toFixed(1)+" m";
+    document.getElementById("profileMax").textContent=profileMetadata.maxElevation===null?"—":profileMetadata.maxElevation.toFixed(1)+" m";
     document.getElementById("profileStats").classList.remove("hidden");
 
     drawProfile(data);
-
-    profileStatus.className="status ok";
-    profileStatus.textContent="✓ Profile generated from "+data.elevation_source+
-      ". Actual interval: "+data.actual_interval_m+" m.";
+    const spacingChanged=actualInterval!==null && Math.abs(actualInterval-requestedInterval)>0.001;
+    profileStatus.className=spacingChanged?"status warn":"status ok";
+    profileStatus.textContent="✓ Profile generated from "+profileMetadata.source+
+      ". Actual interval: "+(actualInterval===null?"not reported":actualInterval+" m")+"."+
+      (spacingChanged?" Requested: "+requestedInterval+" m. The server returned a different sampling gap; Excel will use the returned samples.":"");
+    profileExcelBtn.disabled=false;
+    profileExcelStatus.textContent="Excel includes every returned sample, its actual gap and elevation. Missing elevations remain blank.";
 
     // If no map preview was loaded, draw profile sample line on the map.
     if(!cadLayer){
-      const latlngs=profilePoints.map(p=>[p.lat,p.lon]);
-      cadLayer=L.polyline(latlngs,{weight:3}).addTo(map);
-      map.fitBounds(cadLayer.getBounds(),{padding:[25,25]});
-      zoomBtn.disabled=false;
-      clearMapBtn.disabled=false;
+      const latlngs=profilePoints.filter(p=>p.lat!==null && p.lon!==null).map(p=>[p.lat,p.lon]);
+      if(latlngs.length){
+        cadLayer=L.polyline(latlngs,{weight:3}).addTo(map);
+        map.fitBounds(cadLayer.getBounds(),{padding:[25,25]});
+        zoomBtn.disabled=false;
+        clearMapBtn.disabled=false;
+      }
     }
   }catch(err){
+    if(requestId!==profileRequestId) return;
+    resetProfileExport();
     profileStatus.className="status error";
     profileStatus.textContent="Profile failed: "+err.message;
   }finally{
-    profileBtn.disabled=false;
+    if(requestId===profileRequestId) profileBtn.disabled=false;
+  }
+});
+
+// EXCEL EXPORT: use the same samples as the plotted profile, with no resampling.
+function profileKp(chainage){
+  const mm=Math.round(chainage*1000);
+  const km=Math.floor(mm/1000000);
+  const rest=mm-km*1000000;
+  return km+"+"+String(Math.floor(rest/1000)).padStart(3,"0")+
+    (rest%1000?"."+String(rest%1000).padStart(3,"0"):"");
+}
+function excelXml(value){
+  return String(value ?? "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,"")
+    .replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&apos;"}[c]));
+}
+function excelColumn(index){
+  let name="";
+  for(let n=index+1;n>0;n=Math.floor((n-1)/26)) name=String.fromCharCode(65+(n-1)%26)+name;
+  return name;
+}
+function excelCell(value,row,column,style){
+  const ref=excelColumn(column)+row;
+  if(value===null || value===undefined) return '<c r="'+ref+'" s="'+style+'"/>';
+  if(typeof value==="number" && Number.isFinite(value))
+    return '<c r="'+ref+'" s="'+style+'"><v>'+value+'</v></c>';
+  // Inline strings preserve KP identifiers and cannot execute Excel formulas.
+  return '<c r="'+ref+'" s="'+style+'" t="inlineStr"><is><t xml:space="preserve">'+excelXml(value)+'</t></is></c>';
+}
+function excelSheet(rows,widths,styles,filter){
+  const lastRow=rows.length;
+  const lastCol=excelColumn(widths.length-1);
+  const cols=widths.map((w,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join("");
+  const body=rows.map((row,i)=>'<row r="'+(i+1)+'" ht="'+(i===0?30:(filter?22:34))+'" customHeight="1">'+
+    row.map((value,c)=>excelCell(value,i+1,c,i===0?1:(filter?styles[c]:c===0?5:typeof value==="number"?2:6))).join("")+ '</row>').join("");
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'+
+    '<dimension ref="A1:'+lastCol+lastRow+'"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'+
+    '<sheetFormatPr defaultRowHeight="22"/><cols>'+cols+'</cols><sheetData>'+body+'</sheetData>'+
+    (filter?'<autoFilter ref="A1:'+lastCol+lastRow+'"/>':"")+
+    '<pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/></worksheet>';
+}
+async function createProfileWorkbook(points,meta){
+  if(!points.length) throw new Error("Generate a terrain profile first.");
+  if(typeof JSZip==="undefined") throw new Error("Excel export needs JSZip. Reload the page with an internet connection.");
+  const rows=[["Sample No.","KP","Chainage (m)","Gap from previous (m)","Elevation (m)","Latitude (deg)","Longitude (deg)","Elevation Status"]];
+  points.forEach((p,i)=>rows.push([i+1,String(p.kp ?? profileKp(p.chainage_m)),p.chainage_m,
+    i?p.chainage_m-points[i-1].chainage_m:0,p.elevation_m,p.lat,p.lon,
+    p.elevation_m===null?"No DEM value":"Available"]));
+  const gaps=points.slice(1).map((p,i)=>p.chainage_m-points[i].chainage_m);
+  const changed=meta.actualInterval!==null && Math.abs(meta.actualInterval-meta.requestedInterval)>0.001;
+  const details=[["Profile setting","Value"],["Project number",meta.projectNo],
+    ["Project name",meta.projectName],["Input file",meta.filename],
+    ["Elevation source",meta.source],["Profile generated (UTC)",meta.generatedAt],
+    ["Requested interval (m)",meta.requestedInterval],["Returned nominal interval (m)",meta.actualInterval],
+    ["Minimum actual gap (m)",gaps.length?Math.min(...gaps):null],
+    ["Maximum actual gap (m)",gaps.length?Math.max(...gaps):null],
+    ["Route length (km)",meta.totalLengthKm],["Samples",points.length],
+    ["Missing elevations",points.filter(p=>p.elevation_m===null).length],
+    ["Minimum elevation (m)",meta.minElevation],["Maximum elevation (m)",meta.maxElevation],
+    ["Coordinates","WGS 84 longitude / latitude (EPSG:4326)"],
+    ["Sampling",changed?"The server changed the requested spacing. This workbook contains the returned profile samples at their actual chainages.":"This workbook contains the same samples as the profile chart. The final gap may be shorter at the route endpoint."],
+    ["Elevation data","SRTM/ASTER terrain values are trial DEM elevations, not topographic survey RL. Blank cells mean no elevation was returned."],
+    ["Resampling","None. No intermediate elevations have been interpolated or invented."]];
+  const zip=new JSZip();
+  const ns='http://schemas.openxmlformats.org/';
+  zip.file('[Content_Types].xml','<?xml version="1.0" encoding="UTF-8"?><Types xmlns="'+ns+'package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>');
+  zip.file('_rels/.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="'+ns+'package/2006/relationships"><Relationship Id="rId1" Type="'+ns+'officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
+  zip.file('xl/workbook.xml','<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="'+ns+'spreadsheetml/2006/main" xmlns:r="'+ns+'officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets><sheet name="Profile Elevations" sheetId="1" r:id="rId1"/><sheet name="Profile Details" sheetId="2" r:id="rId2"/></sheets></workbook>');
+  zip.file('xl/_rels/workbook.xml.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="'+ns+'package/2006/relationships"><Relationship Id="rId1" Type="'+ns+'officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="'+ns+'officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="'+ns+'officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>');
+  zip.file('xl/styles.xml','<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="'+ns+'spreadsheetml/2006/main"><numFmts count="2"><numFmt numFmtId="164" formatCode="0.000"/><numFmt numFmtId="165" formatCode="0.0000000"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1F4E78"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="7"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>');
+  zip.file('xl/worksheets/sheet1.xml',excelSheet(rows,[12,18,19,24,19,20,20,22],[4,0,2,2,2,3,3,0],true));
+  zip.file('xl/worksheets/sheet2.xml',excelSheet(details,[34,105],[],false));
+  return zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",compression:"DEFLATE"});
+}
+
+profileExcelBtn.addEventListener("click",async()=>{
+  if(!profileMetadata || !profilePoints.length) return;
+  const points=profilePoints.map(p=>({...p}));
+  const meta={...profileMetadata};
+  const exportId=++profileExportId;
+  profileExcelBtn.disabled=true;
+  profileExcelStatus.textContent="Preparing Excel workbook…";
+  try{
+    const blob=await createProfileWorkbook(points,meta);
+    if(exportId!==profileExportId) return;
+    const base=String(meta.projectNo || meta.filename.replace(/\.[^.]+$/,""))
+      .replace(/[^a-zA-Z0-9_-]/g,"_").slice(0,80) || "Alignment";
+    const gap=meta.actualInterval===null?"actual":String(Number(meta.actualInterval.toFixed(3))).replace(".","p");
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;
+    a.download=base+"_Profile_Elevations_"+gap+"m.xlsx";
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+    profileExcelStatus.textContent="Excel downloaded: "+points.length+" samples, with chainage, actual gap and elevation.";
+  }catch(err){
+    if(exportId===profileExportId) profileExcelStatus.textContent="Excel export failed: "+err.message;
+  }finally{
+    if(exportId===profileExportId) profileExcelBtn.disabled=!profileMetadata;
   }
 });
 
