@@ -119,18 +119,14 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
 
 <nav class="tools-menu" aria-label="Processing tools">
   <button type="button" data-tool-panel="gisWorkspace" aria-pressed="true">GIS Conversion & Profile</button>
-  <button type="button" data-tool-panel="gdbTransferPanel" aria-pressed="false">GDB Transfer</button>
+  <button type="button" disabled aria-disabled="true" title="Cloud GDB Transfer will be added in a later update">GDB Transfer · Coming soon</button>
   <button type="button" data-tool-panel="gdbQcPanel" aria-pressed="false">GDB QC Check</button>
 </nav>
 <section id="gdbConnectionPanel" class="card gdb-config hidden">
-  <h2>GDB processing connection</h2>
-  <p class="gdb-help">These tools run on a licensed ArcGIS machine. For the local trial, start the supplied GDB service and open this portal at http://127.0.0.1:8001.</p>
-  <div class="gdb-config-grid">
-    <div><label for="gdbServiceUrl">GDB service URL</label><input id="gdbServiceUrl" type="text" value="http://127.0.0.1:8001" spellcheck="false"></div>
-    <div><label for="gdbServiceKey">Access key (if configured)</label><input id="gdbServiceKey" type="password" autocomplete="off" placeholder="Optional for local trial"></div>
-    <button id="gdbConnectBtn" class="secondary">Check connection</button>
-  </div>
-  <div id="gdbConnectionStatus" class="status" role="status" aria-live="polite">Start the GDB service, then check the connection.</div>
+  <h2>Cloud GDB QC</h2>
+  <p class="gdb-help">The cloud connection is automatic. Upload the input and reference GDBs as separate ZIP files.</p>
+  <button id="gdbConnectBtn" class="secondary">Refresh connection</button>
+  <div id="gdbConnectionStatus" class="status" role="status" aria-live="polite">Checking the cloud service…</div>
 </section>
 <div id="gisWorkspace" class="tool-panel">
 
@@ -295,28 +291,10 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
 </section>
 
 </div>
-<div id="gdbTransferPanel" class="tool-panel hidden">
-  <section class="card">
-    <h2>GDB schema transfer</h2>
-    <p class="gdb-help">Load source and target GDB ZIP files, select source classes, and choose their targets. Records are appended to a working copy of the target; download the updated GDB after processing.</p>
-    <div class="gdb-input-grid">
-      <div><label for="transferSourceFile">Source / old GDB ZIP</label><input id="transferSourceFile" type="file" accept=".zip"><button id="transferSourceLoad" class="secondary" disabled>Load source classes</button><div id="transferSourceStatus" class="status" role="status">No source GDB loaded.</div></div>
-      <div><label for="transferTargetFile">Target / new schema GDB ZIP</label><input id="transferTargetFile" type="file" accept=".zip"><button id="transferTargetLoad" class="secondary" disabled>Load target classes</button><div id="transferTargetStatus" class="status" role="status">No target GDB loaded.</div></div>
-    </div>
-    <div class="gdb-actions"><button id="transferSelectAll" class="secondary" disabled>Select all matched classes</button><button id="transferSelectNone" class="secondary" disabled>Clear selection</button></div>
-    <div id="transferClassTable" class="gdb-table-wrap hidden"></div>
-    <label for="transferTransform">Geographic transformation (only when required)</label><input id="transferTransform" type="text" placeholder="e.g. Nahrwan_1967_To_WGS_1984_3" spellcheck="false">
-    <p class="gdb-help">The worker validates the transformation against the source and target CRS. Classes with geometry, Z/M or incompatible field types are reported instead of silently converted.</p>
-    <button id="transferRun" class="primary" disabled>Transfer selected classes</button>
-    <progress id="transferProgress" class="gdb-progress hidden" max="100" value="0" aria-label="GDB transfer progress"></progress>
-    <div id="transferRunStatus" class="status" role="status" aria-live="polite">Load both GDBs and select matching classes.</div>
-    <div id="transferResult"></div>
-  </section>
-</div>
 <div id="gdbQcPanel" class="tool-panel hidden">
   <section class="card">
-    <h2>GDB quality check</h2>
-    <p class="gdb-help">Check nulls and blank values, short lines, duplicate geometry, empty geometry, schema fields, domains and subtypes. Download the summary and detailed Excel report.</p>
+    <h2>Cloud GDB quality check</h2>
+    <p class="gdb-help">Check nulls and blank values, short lines, exact duplicate geometry, empty geometry, schema fields, domains and readable subtype metadata. Download the summary and detailed Excel report.</p>
     <div class="gdb-input-grid">
       <div><label for="qcInputFile">Input / prepared GDB ZIP</label><input id="qcInputFile" type="file" accept=".zip"><button id="qcInputLoad" class="secondary" disabled>Load input classes</button><div id="qcInputStatus" class="status" role="status">No input GDB loaded.</div></div>
       <div><label for="qcSchemaFile">Reference schema GDB ZIP</label><input id="qcSchemaFile" type="file" accept=".zip"><button id="qcSchemaLoad" class="secondary" disabled>Load reference schema</button><div id="qcSchemaStatus" class="status" role="status">No schema GDB loaded.</div></div>
@@ -325,6 +303,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
     <div id="qcClassTable" class="gdb-table-wrap hidden"></div>
     <label for="qcShortLimit">Short-segment threshold (m)</label><input id="qcShortLimit" type="number" value="2" min="0.001" step="0.1">
     <p class="gdb-help">The 2 m default follows your Python tool. Use 5 m if required by your project. Lengths are checked in metres. QC reports issues and does not edit the uploaded data.</p>
+    <p class="gdb-help">Cloud QC uses GDAL/OGR and needs no ArcGIS installation. Duplicates use exact normalized geometry without ArcGIS snapping tolerance. Excel lists unsupported or incomplete checks in Check_Coverage.</p>
     <button id="qcRun" class="primary" disabled>Run QC & generate Excel</button>
     <progress id="qcProgress" class="gdb-progress hidden" max="100" value="0" aria-label="GDB QC progress"></progress>
     <div id="qcRunStatus" class="status" role="status" aria-live="polite">Load input and reference schema GDBs.</div>
@@ -1150,113 +1129,120 @@ inputEpsg.addEventListener("change",()=>{
 </script>
 
 <script>
-// GDB tool menu and isolated ArcGIS service. The existing converter/profile API is unchanged.
-const gdbSlots={
-  transferSource:{fileId:"transferSourceFile",loadId:"transferSourceLoad",statusId:"transferSourceStatus",uploadId:null,classes:[],version:0},
-  transferTarget:{fileId:"transferTargetFile",loadId:"transferTargetLoad",statusId:"transferTargetStatus",uploadId:null,classes:[],version:0},
+// Cloud-only QC: API requests use this page's own origin and HttpOnly session.
+const gdbById=id=>document.getElementById(id);
+const qcSlots={
   qcInput:{fileId:"qcInputFile",loadId:"qcInputLoad",statusId:"qcInputStatus",uploadId:null,classes:[],version:0},
   qcSchema:{fileId:"qcSchemaFile",loadId:"qcSchemaLoad",statusId:"qcSchemaStatus",uploadId:null,classes:[],version:0}
 };
-let gdbTransferBusy=false,gdbQcBusy=false,gdbServiceVersion=0;
-const gdbById=id=>document.getElementById(id);
+let gdbQcBusy=false,qcReady=false,qcConnecting=false;
+function gdbStatus(id,text,type=""){
+  const node=gdbById(id);node.textContent=text;node.className="status"+(type?" "+type:"");
+}
+async function qcFetch(path,options={}){
+  if(!["http:","https:"].includes(location.protocol))throw new Error("Open this portal from its deployed cloud web address to use QC.");
+  let response;
+  try{response=await fetch(location.origin+path,{...options,credentials:"same-origin"});}
+  catch(e){throw new Error("The cloud service is not responding. Wait briefly, then refresh the connection.");}
+  if(!response.ok){let error;try{error=await response.json();}catch(e){}throw new Error(typeof error?.detail==="string"?error.detail:"Cloud QC request failed (HTTP "+response.status+").");}
+  return response;
+}
+async function qcCheckConnection(){
+  if(qcConnecting)return;
+  qcConnecting=true;gdbById("gdbConnectBtn").disabled=true;gdbStatus("gdbConnectionStatus","Connecting to the cloud QC service…");
+  try{
+    const data=await(await qcFetch("/gdb/health")).json();
+    if(!data.ready||!data.gdal_version)throw new Error("Open the portal at the deployed GDAL QC service address.");
+    qcReady=true;gdbStatus("gdbConnectionStatus","Cloud ready · GDAL "+data.gdal_version+" · Upload limit "+data.max_upload_mb+" MB.","ok");
+  }catch(e){qcReady=false;gdbStatus("gdbConnectionStatus",e.message,"error");}
+  finally{qcConnecting=false;gdbById("gdbConnectBtn").disabled=false;qcUpdateControls();}
+}
 for(const button of document.querySelectorAll("[data-tool-panel]")){
   button.addEventListener("click",()=>{
     for(const panel of document.querySelectorAll(".tool-panel"))panel.classList.toggle("hidden",panel.id!==button.dataset.toolPanel);
     for(const other of document.querySelectorAll("[data-tool-panel]"))other.setAttribute("aria-pressed",String(other===button));
-    gdbById("gdbConnectionPanel").classList.toggle("hidden",button.dataset.toolPanel==="gisWorkspace");
-    if(button.dataset.toolPanel==="gisWorkspace" && typeof map!=="undefined")setTimeout(()=>map.invalidateSize(),0);
+    const qc=button.dataset.toolPanel==="gdbQcPanel";
+    gdbById("gdbConnectionPanel").classList.toggle("hidden",!qc);
+    if(qc&&!qcReady)qcCheckConnection();
+    if(!qc&&typeof map!=="undefined")setTimeout(()=>map.invalidateSize(),0);
   });
 }
-if(["localhost","127.0.0.1"].includes(location.hostname))gdbById("gdbServiceUrl").value=location.origin;
-function gdbStatus(id,text,type=""){
-  const node=gdbById(id);node.textContent=text;node.className="status"+(type?" "+type:"");
-}
-function gdbBase(){
-  const raw=gdbById("gdbServiceUrl").value.trim().replace(/\/+$/,"");
-  let url;try{url=new URL(raw);}catch(e){throw new Error("Enter the complete GDB service URL, including http:// or https://.");}
-  if(!["http:","https:"].includes(url.protocol)||url.username||url.password||url.search||url.hash)throw new Error("Use an HTTP or HTTPS service URL without credentials or query parameters.");
-  return raw;
-}
-function gdbHeaders(){const key=gdbById("gdbServiceKey").value;return key?{"X-GDB-Key":key}:{};}
-async function gdbFetch(path,options={}){
-  let response;
-  try{response=await fetch(gdbBase()+path,{...options,headers:{...gdbHeaders(),...(options.headers||{})}});}
-  catch(e){throw new Error("Cannot reach the GDB service. Start it on your ArcGIS machine and check its URL, HTTPS and allowed origins. For the local trial, open http://127.0.0.1:8001.");}
-  if(!response.ok){let error;try{error=await response.json();}catch(e){}throw new Error(typeof error?.detail==="string"?error.detail:"GDB request failed (HTTP "+response.status+").");}
-  return response;
-}
-async function gdbPoll(jobId,onUpdate){
+gdbById("gdbConnectBtn").onclick=qcCheckConnection;
+async function qcPoll(jobId,onUpdate){
   const started=Date.now();let failedAttempts=0;
   for(;;){
     let data;
-    try{data=await (await gdbFetch("/gdb/jobs/"+jobId)).json();failedAttempts=0;}
+    try{data=await(await qcFetch("/gdb/jobs/"+jobId)).json();failedAttempts=0;}
     catch(e){if(++failedAttempts>=3)throw e;await new Promise(r=>setTimeout(r,3000));continue;}
     onUpdate(data);
-    if(data.state==="failed")throw new Error(data.message||"GDB processing failed.");
+    if(data.state==="failed")throw new Error(data.message||"QC processing failed.");
     if(["completed","completed_with_warnings"].includes(data.state))return data;
-    if(Date.now()-started>3*60*60*1000)throw new Error("This job is still pending after three hours. Check the GDB service log. Job: "+jobId);
+    if(Date.now()-started>60*60*1000)throw new Error("This job is still pending. Check the cloud service. Job: "+jobId);
     await new Promise(r=>setTimeout(r,1500));
   }
 }
-gdbById("gdbConnectBtn").addEventListener("click",async()=>{
-  const button=gdbById("gdbConnectBtn");button.disabled=true;gdbStatus("gdbConnectionStatus","Checking ArcGIS worker and license…");
-  try{const data=await(await gdbFetch("/gdb/health")).json();if(!data.ready)throw new Error("The ArcGIS worker is not ready.");gdbStatus("gdbConnectionStatus","Connected: ArcGIS "+data.arcgis_version+" / "+data.arcgis_product+". Upload limit: "+data.max_upload_mb+" MB.","ok");}
-  catch(e){gdbStatus("gdbConnectionStatus",e.message,"error");}finally{button.disabled=false;}
-});
-function gdbResetSlot(slot){slot.version++;slot.uploadId=null;slot.classes=[];gdbById(slot.loadId).disabled=!gdbById(slot.fileId).files.length;gdbStatus(slot.statusId,"Load this GDB before processing.");}
-for(const [name,slot] of Object.entries(gdbSlots)){
-  gdbById(slot.fileId).addEventListener("change",()=>{gdbResetSlot(slot);if(name.startsWith("transfer")){gdbById("transferResult").replaceChildren();gdbRenderTransfer();}else{gdbById("qcResult").replaceChildren();gdbRenderQc();}});
+function qcUpdateControls(){
+  for(const slot of Object.values(qcSlots))gdbById(slot.loadId).disabled=!qcReady||slot.loading||gdbQcBusy||!gdbById(slot.fileId).files.length;
+  gdbById("qcSelectAll").disabled=gdbQcBusy||!qcSlots.qcInput.uploadId;
+  gdbById("qcSelectNone").disabled=gdbQcBusy||!qcSlots.qcInput.uploadId;
+  gdbById("qcRun").disabled=!qcReady||gdbQcBusy||!qcSlots.qcInput.uploadId||!qcSlots.qcSchema.uploadId||!document.querySelector(".qc-pick:checked");
+  gdbById("qcShortLimit").disabled=gdbQcBusy;
+}
+function gdbRenderQc(){
+  const slot=qcSlots.qcInput,wrap=gdbById("qcClassTable");wrap.classList.toggle("hidden",!slot.uploadId);
+  if(!slot.uploadId){wrap.replaceChildren();qcUpdateControls();return;}
+  wrap.innerHTML='<table class="gdb-table"><thead><tr><th>Select</th><th>Feature class</th><th>Geometry</th><th>Records</th><th>Coordinate system</th></tr></thead><tbody>'+slot.classes.map((f,i)=>'<tr><td><input type="checkbox" class="qc-pick" data-class-index="'+i+'" checked aria-label="Check '+escapeHtml(f.path)+'"></td><td>'+escapeHtml(f.path)+'</td><td>'+escapeHtml(f.geometry)+'</td><td>'+f.count+'</td><td>'+escapeHtml(f.crs)+'</td></tr>').join('')+'</tbody></table>';
+  wrap.querySelectorAll("input").forEach(c=>c.addEventListener("change",qcUpdateControls));qcUpdateControls();
+}
+for(const [name,slot] of Object.entries(qcSlots)){
+  gdbById(slot.fileId).addEventListener("change",()=>{
+    slot.version++;slot.uploadId=null;slot.classes=[];slot.loading=false;gdbById("qcResult").replaceChildren();gdbStatus(slot.statusId,"Load this GDB before processing.");
+    gdbRenderQc();
+  });
   gdbById(slot.loadId).addEventListener("click",async()=>{
-    const file=gdbById(slot.fileId).files[0];if(!file)return;
-    const version=++slot.version;slot.uploadId=null;slot.classes=[];gdbById(slot.loadId).disabled=true;
-    const serviceVersion=gdbServiceVersion;
-    if(name.startsWith("transfer"))gdbRenderTransfer();else gdbRenderQc();
+    const file=gdbById(slot.fileId).files[0];if(!file||!qcReady)return;
+    const version=++slot.version;slot.uploadId=null;slot.classes=[];slot.loading=true;gdbById("qcResult").replaceChildren();gdbRenderQc();
     try{
       gdbStatus(slot.statusId,"Uploading "+file.name+"…");const form=new FormData();form.append("file",file);
-      const submitted=await(await gdbFetch("/gdb/inspect",{method:"POST",body:form})).json();
-      const done=await gdbPoll(submitted.job_id,state=>{if(version===slot.version && serviceVersion===gdbServiceVersion)gdbStatus(slot.statusId,(state.message||state.state)+" ("+Math.round(state.progress||0)+"%)");});
-      if(version!==slot.version || serviceVersion!==gdbServiceVersion)return;
+      const submitted=await(await qcFetch("/gdb/inspect",{method:"POST",body:form})).json();
+      const done=await qcPoll(submitted.job_id,state=>{if(version===slot.version)gdbStatus(slot.statusId,(state.message||state.state)+" ("+Math.round(state.progress||0)+"%)");});
+      if(version!==slot.version)return;
       slot.uploadId=submitted.job_id;slot.classes=done.result.classes;
       gdbStatus(slot.statusId,done.result.gdb_name+": "+slot.classes.length+" feature classes loaded.","ok");
     }catch(e){if(version===slot.version)gdbStatus(slot.statusId,e.message,"error");}
-    finally{if(version===slot.version){gdbById(slot.loadId).disabled=false;if(name.startsWith("transfer"))gdbRenderTransfer();else gdbRenderQc();}}
+    finally{if(version===slot.version){slot.loading=false;gdbRenderQc();}}
   });
 }
-for(const id of ["gdbServiceUrl","gdbServiceKey"]){gdbById(id).addEventListener("change",()=>{gdbServiceVersion++;Object.values(gdbSlots).forEach(gdbResetSlot);gdbRenderTransfer();gdbRenderQc();gdbStatus("gdbConnectionStatus","Connection settings changed. Check the connection and reload your GDBs.");gdbById("transferResult").replaceChildren();gdbById("qcResult").replaceChildren();});}
-function gdbAutoTarget(source,targets){const exact=targets.filter(t=>t.path.toLowerCase()===source.path.toLowerCase());if(exact.length===1)return exact[0].path;const same=targets.filter(t=>t.name.toLowerCase()===source.name.toLowerCase());return same.length===1?same[0].path:"";}
-function gdbRenderTransfer(){
-  const source=gdbSlots.transferSource,target=gdbSlots.transferTarget,wrap=gdbById("transferClassTable");
-  wrap.classList.toggle("hidden",!source.uploadId);
-  if(source.uploadId){wrap.innerHTML='<table class="gdb-table"><thead><tr><th>Select</th><th>Source feature class</th><th>Geometry</th><th>Records</th><th>Target feature class</th></tr></thead><tbody>'+source.classes.map((s,i)=>{
-    const chosen=gdbAutoTarget(s,target.classes);
-    return '<tr class="'+(chosen?'':'gdb-row-warning')+'"><td><input type="checkbox" class="transfer-pick" data-source-index="'+i+'" aria-label="Select '+escapeHtml(s.path)+'"></td><td>'+escapeHtml(s.path)+'</td><td>'+escapeHtml(s.geometry)+'</td><td>'+s.count+'</td><td><select class="transfer-target" data-source-index="'+i+'" aria-label="Target for '+escapeHtml(s.path)+'"><option value="">Choose target…</option>'+target.classes.map((t,j)=>'<option value="'+j+'"'+(t.path===chosen?' selected':'')+'>'+escapeHtml(t.path)+' ('+escapeHtml(t.geometry)+')</option>').join('')+'</select></td></tr>';
-  }).join('')+'</tbody></table>';}
-  gdbById("transferSelectAll").disabled=!source.uploadId||!target.uploadId;gdbById("transferSelectNone").disabled=!source.uploadId;
-  wrap.querySelectorAll("input,select").forEach(node=>node.addEventListener("change",gdbUpdateTransferButton));gdbUpdateTransferButton();
-}
-function gdbUpdateTransferButton(){const checked=[...document.querySelectorAll(".transfer-pick:checked")];const valid=checked.every(c=>gdbById("transferClassTable").querySelector('.transfer-target[data-source-index="'+c.dataset.sourceIndex+'"]').value!=="");gdbById("transferRun").disabled=gdbTransferBusy||!gdbSlots.transferSource.uploadId||!gdbSlots.transferTarget.uploadId||!checked.length||!valid;}
-gdbById("transferSelectAll").onclick=()=>{document.querySelectorAll(".transfer-pick").forEach(c=>c.checked=gdbById("transferClassTable").querySelector('.transfer-target[data-source-index="'+c.dataset.sourceIndex+'"]').value!=="");gdbUpdateTransferButton();};
-gdbById("transferSelectNone").onclick=()=>{document.querySelectorAll(".transfer-pick").forEach(c=>c.checked=false);gdbUpdateTransferButton();};
-function gdbRenderQc(){const slot=gdbSlots.qcInput,wrap=gdbById("qcClassTable");wrap.classList.toggle("hidden",!slot.uploadId);if(slot.uploadId)wrap.innerHTML='<table class="gdb-table"><thead><tr><th>Select</th><th>Feature class</th><th>Geometry</th><th>Records</th><th>Coordinate system</th></tr></thead><tbody>'+slot.classes.map((f,i)=>'<tr><td><input type="checkbox" class="qc-pick" data-class-index="'+i+'" checked aria-label="Check '+escapeHtml(f.path)+'"></td><td>'+escapeHtml(f.path)+'</td><td>'+escapeHtml(f.geometry)+'</td><td>'+f.count+'</td><td>'+escapeHtml(f.crs)+'</td></tr>').join('')+'</tbody></table>';wrap.querySelectorAll("input").forEach(c=>c.addEventListener("change",gdbUpdateQcButton));gdbById("qcSelectAll").disabled=!slot.uploadId;gdbById("qcSelectNone").disabled=!slot.uploadId;gdbUpdateQcButton();}
-function gdbUpdateQcButton(){gdbById("qcRun").disabled=gdbQcBusy||!gdbSlots.qcInput.uploadId||!gdbSlots.qcSchema.uploadId||!document.querySelector(".qc-pick:checked");}
-gdbById("qcSelectAll").onclick=()=>{document.querySelectorAll(".qc-pick").forEach(c=>c.checked=true);gdbUpdateQcButton();};gdbById("qcSelectNone").onclick=()=>{document.querySelectorAll(".qc-pick").forEach(c=>c.checked=false);gdbUpdateQcButton();};
-function gdbAddDownloads(container,job){const row=document.createElement("div");row.className="gdb-downloads";for(const artifact of job.result.artifacts||[]){const button=document.createElement("button");button.textContent=artifact.label;button.onclick=async()=>{button.disabled=true;try{const response=await gdbFetch('/gdb/jobs/'+job.job_id+'/download/'+encodeURIComponent(artifact.name));const blob=await response.blob();const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=artifact.name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}catch(e){gdbStatus(job.action==='transfer'?'transferRunStatus':'qcRunStatus',e.message,"error");}finally{button.disabled=false;}};row.append(button);}container.append(row);}
+gdbById("qcSelectAll").onclick=()=>{document.querySelectorAll(".qc-pick").forEach(c=>c.checked=true);qcUpdateControls();};
+gdbById("qcSelectNone").onclick=()=>{document.querySelectorAll(".qc-pick").forEach(c=>c.checked=false);qcUpdateControls();};
 function gdbResultTable(headers,rows){return '<div class="gdb-table-wrap"><table class="gdb-table"><thead><tr>'+headers.map(h=>'<th>'+escapeHtml(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(v=>'<td>'+escapeHtml(v===null||v===undefined?'—':String(v))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';}
-gdbById("transferRun").addEventListener("click",async()=>{
-  const source=gdbSlots.transferSource,target=gdbSlots.transferTarget;
-  const selections=[...document.querySelectorAll(".transfer-pick:checked")].map(c=>{const i=Number(c.dataset.sourceIndex),j=Number(gdbById("transferClassTable").querySelector('.transfer-target[data-source-index="'+i+'"]').value);return {source:source.classes[i].path,target:target.classes[j].path};});
-  if(!selections.length)return;
-  const version=gdbServiceVersion,sourceVersion=source.version,targetVersion=target.version;gdbTransferBusy=true;gdbUpdateTransferButton();gdbById("transferResult").replaceChildren();gdbById("transferProgress").classList.remove("hidden");
-  try{const job=await(await gdbFetch("/gdb/transfer",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_upload_id:source.uploadId,target_upload_id:target.uploadId,selections,transformation:gdbById("transferTransform").value.trim()})})).json();const done=await gdbPoll(job.job_id,state=>{if(version!==gdbServiceVersion)return;gdbById("transferProgress").value=state.progress||0;gdbStatus("transferRunStatus",(state.message||state.state)+" ("+Math.round(state.progress||0)+"%)");});if(version!==gdbServiceVersion||sourceVersion!==source.version||targetVersion!==target.version)return;const container=gdbById("transferResult");container.innerHTML=gdbResultTable(["Source","Target","Status","Added records","Message"],done.result.classes.map(r=>[r.source,r.target,r.status,r.added,r.message]));gdbAddDownloads(container,done);gdbStatus("transferRunStatus","Transfer finished: "+done.result.added_records+" records added. "+(done.result.has_warnings?"Review the class errors/partial results before using the downloaded GDB.":"Download the updated target GDB."),done.result.has_warnings?"warn":"ok");}
-  catch(e){if(version===gdbServiceVersion)gdbStatus("transferRunStatus",e.message,"error");}finally{gdbTransferBusy=false;gdbUpdateTransferButton();}
-});
+function qcAddDownloads(container,job){
+  const row=document.createElement("div");row.className="gdb-downloads";
+  for(const artifact of job.result.artifacts||[]){
+    const button=document.createElement("button");button.textContent=artifact.label;
+    button.onclick=async()=>{button.disabled=true;try{
+      const response=await qcFetch('/gdb/jobs/'+job.job_id+'/download/'+encodeURIComponent(artifact.name));const blob=await response.blob();
+      const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=artifact.name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+    }catch(e){gdbStatus("qcRunStatus",e.message,"error");}finally{button.disabled=false;}};
+    row.append(button);
+  }
+  container.append(row);
+}
 gdbById("qcRun").addEventListener("click",async()=>{
-  const selected=[...document.querySelectorAll(".qc-pick:checked")].map(c=>gdbSlots.qcInput.classes[Number(c.dataset.classIndex)].path),limit=Number(gdbById("qcShortLimit").value);
-  if(!selected.length)return;if(!Number.isFinite(limit)||limit<=0){gdbStatus("qcRunStatus","Enter a positive short-segment threshold.","error");return;}
-  const version=gdbServiceVersion,inputVersion=gdbSlots.qcInput.version,schemaVersion=gdbSlots.qcSchema.version;gdbQcBusy=true;gdbUpdateQcButton();gdbById("qcResult").replaceChildren();gdbById("qcProgress").classList.remove("hidden");
-  try{const job=await(await gdbFetch("/gdb/qc",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({input_upload_id:gdbSlots.qcInput.uploadId,schema_upload_id:gdbSlots.qcSchema.uploadId,short_limit_m:limit,selected})})).json();const done=await gdbPoll(job.job_id,state=>{if(version!==gdbServiceVersion)return;gdbById("qcProgress").value=state.progress||0;gdbStatus("qcRunStatus",(state.message||state.state)+" ("+Math.round(state.progress||0)+"%)");});if(version!==gdbServiceVersion||inputVersion!==gdbSlots.qcInput.version||schemaVersion!==gdbSlots.qcSchema.version)return;const container=gdbById("qcResult");container.innerHTML=gdbResultTable(["Feature class","Records","Null cells","Blank cells","Short","Duplicates","Empty","Domains","Schema","Status"],done.result.classes.map(r=>[r.path,r.records,r.null_cells,r.blank_cells,r.short_segments,r.duplicates,r.empty_geometry,r.domain_violations,r.schema_issues,r.status]));gdbAddDownloads(container,done);gdbStatus("qcRunStatus","QC finished for "+done.result.classes.length+" classes. "+(done.result.has_warnings?"Some checks are INCOMPLETE; see Check_Errors in Excel.":"Download Excel for the detailed findings."),done.result.has_warnings?"warn":"ok");}
-  catch(e){if(version===gdbServiceVersion)gdbStatus("qcRunStatus",e.message,"error");}finally{gdbQcBusy=false;gdbUpdateQcButton();}
+  const selected=[...document.querySelectorAll(".qc-pick:checked")].map(c=>qcSlots.qcInput.classes[Number(c.dataset.classIndex)].path),limit=Number(gdbById("qcShortLimit").value);
+  if(!selected.length)return;if(!Number.isFinite(limit)||limit<=0){gdbStatus("qcRunStatus","Enter a positive short-line threshold.","error");return;}
+  const inputVersion=qcSlots.qcInput.version,schemaVersion=qcSlots.qcSchema.version;
+  gdbQcBusy=true;qcUpdateControls();gdbById("qcResult").replaceChildren();gdbById("qcProgress").classList.remove("hidden");
+  try{
+    const job=await(await qcFetch("/gdb/qc",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({input_upload_id:qcSlots.qcInput.uploadId,schema_upload_id:qcSlots.qcSchema.uploadId,short_limit_m:limit,selected})})).json();
+    const done=await qcPoll(job.job_id,state=>{gdbById("qcProgress").value=state.progress||0;gdbStatus("qcRunStatus",(state.message||state.state)+" ("+Math.round(state.progress||0)+"%)");});
+    if(inputVersion!==qcSlots.qcInput.version||schemaVersion!==qcSlots.qcSchema.version)return;
+    const container=gdbById("qcResult");container.innerHTML=gdbResultTable(["Feature class","Records","Null cells","Blank cells","Short","Exact duplicates","Empty","Domains","Schema","Status"],done.result.classes.map(r=>[r.path,r.records,r.null_cells,r.blank_cells,r.short_segments,r.duplicates,r.empty_geometry,r.domain_violations,r.schema_issues,r.status]));
+    qcAddDownloads(container,done);gdbStatus("qcRunStatus","QC finished for "+done.result.classes.length+" classes. "+(done.result.has_warnings?"Review incomplete checks or truncated details in Check_Coverage in Excel.":"Download Excel for the detailed findings."),done.result.has_warnings?"warn":"ok");
+  }catch(e){gdbStatus("qcRunStatus",e.message,"error");}
+  finally{gdbQcBusy=false;qcUpdateControls();}
 });
+qcUpdateControls();
 </script>
 
 </body>
