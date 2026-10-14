@@ -1129,7 +1129,10 @@ inputEpsg.addEventListener("change",()=>{
 </script>
 
 <script>
-// Cloud-only QC: API requests use this page's own origin and HttpOnly session.
+// Frontend and backend may be hosted in separate repositories/websites.
+const QC_API_BASE="https://gdb-qc-cloud.onrender.com";
+const QC_SESSION_STORAGE="gis-qc-session:"+QC_API_BASE;
+let qcSessionPromise=null;
 const gdbById=id=>document.getElementById(id);
 const qcSlots={
   qcInput:{fileId:"qcInputFile",loadId:"qcInputLoad",statusId:"qcInputStatus",uploadId:null,classes:[],version:0},
@@ -1139,10 +1142,25 @@ let gdbQcBusy=false,qcReady=false,qcConnecting=false;
 function gdbStatus(id,text,type=""){
   const node=gdbById(id);node.textContent=text;node.className="status"+(type?" "+type:"");
 }
+async function qcEnsureSession(){
+  if(qcSessionPromise)return qcSessionPromise;
+  qcSessionPromise=(async()=>{
+    let existing="";try{existing=sessionStorage.getItem(QC_SESSION_STORAGE)||"";}catch(e){}
+    let response;
+    try{response=await fetch(QC_API_BASE+"/gdb/session",{method:"POST",credentials:"omit",headers:existing?{"X-QC-Session":existing}:{}});}
+    catch(e){throw new Error("Cannot connect to cloud QC. Check that the backend is live and permits this frontend address.");}
+    if(!response.ok){let error;try{error=await response.json();}catch(e){}throw new Error(typeof error?.detail==="string"?error.detail:"Cloud session could not start (HTTP "+response.status+").");}
+    const data=await response.json();
+    if(!data.session_token)throw new Error("Update the QC backend to the version that supports a separate frontend.");
+    try{sessionStorage.setItem(QC_SESSION_STORAGE,data.session_token);}catch(e){}
+    return data.session_token;
+  })();
+  try{return await qcSessionPromise;}catch(e){qcSessionPromise=null;throw e;}
+}
 async function qcFetch(path,options={}){
-  if(!["http:","https:"].includes(location.protocol))throw new Error("Open this portal from its deployed cloud web address to use QC.");
-  let response;
-  try{response=await fetch(location.origin+path,{...options,credentials:"same-origin"});}
+  if(!["http:","https:"].includes(location.protocol))throw new Error("Open this portal from its deployed website address to use QC.");
+  const token=await qcEnsureSession();let response;
+  try{response=await fetch(QC_API_BASE+path,{...options,credentials:"omit",headers:{...(options.headers||{}),"X-QC-Session":token}});}
   catch(e){throw new Error("The cloud service is not responding. Wait briefly, then refresh the connection.");}
   if(!response.ok){let error;try{error=await response.json();}catch(e){}throw new Error(typeof error?.detail==="string"?error.detail:"Cloud QC request failed (HTTP "+response.status+").");}
   return response;
@@ -1152,7 +1170,7 @@ async function qcCheckConnection(){
   qcConnecting=true;gdbById("gdbConnectBtn").disabled=true;gdbStatus("gdbConnectionStatus","Connecting to the cloud QC service…");
   try{
     const data=await(await qcFetch("/gdb/health")).json();
-    if(!data.ready||!data.gdal_version)throw new Error("Open the portal at the deployed GDAL QC service address.");
+    if(!data.ready||!data.gdal_version)throw new Error("The QC endpoint is not a ready GDAL cloud backend.");
     qcReady=true;gdbStatus("gdbConnectionStatus","Cloud ready · GDAL "+data.gdal_version+" · Upload limit "+data.max_upload_mb+" MB.","ok");
   }catch(e){qcReady=false;gdbStatus("gdbConnectionStatus",e.message,"error");}
   finally{qcConnecting=false;gdbById("gdbConnectBtn").disabled=false;qcUpdateControls();}
