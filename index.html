@@ -331,7 +331,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
       <div class="tools" style="margin:0 0 12px"><button type="button" id="engApplyView" class="secondary">Apply chainage range</button><button type="button" id="engResetView" class="secondary">Full route</button></div>
       <div id="engViewStatus" class="small" aria-live="polite">Set a start and end chainage to zoom the profile without resampling.</div>
       <div class="profile-stats"><div class="profile-stat"><b id="engLength">—</b><span>Route length</span></div><div class="profile-stat"><b id="engSamples">—</b><span>Samples</span></div><div class="profile-stat"><b id="engCrossingsCount">—</b><span>Crossings</span></div><div class="profile-stat"><b id="engElevationRange">—</b><span>Ground RL range</span></div></div>
-      <div id="engChartViewport" style="width:100%;overflow-x:auto;border:1px solid #e2e8f0;border-radius:8px"><div id="engChartInner" style="height:700px;min-width:100%"><canvas id="engChart"></canvas></div></div>
+      <div id="engChartViewport" style="width:100%;overflow-x:auto;border:1px solid #e2e8f0;border-radius:8px"><div id="engChartInner" style="height:540px;min-width:100%"><canvas id="engChart"></canvas></div></div>
       <div id="engCrossingList" class="gdb-table-wrap"></div>
     </div>
     <p class="small">Crossing chainages are calculated in the selected projected CRS. DEM-derived ground levels are indicative and not verified survey RLs. The current backend does not calculate pipe design elevations or full company-specific engineering bands.</p>
@@ -1339,10 +1339,10 @@ qcUpdateControls();
     chart.update();
     const count=(result.crossings||[]).filter(c=>Number(c.chainage_m)>=start&&Number(c.chainage_m)<=end).length;
     const viewport=el('engChartViewport');
-    const required=Math.max(viewport.clientWidth,count*21+130);
+    const required=Math.max(viewport.clientWidth,count*166+100);
     el('engChartInner').style.width=Math.ceil(required)+'px';
     chart.resize();chart.update();
-    el('engViewStatus').textContent='Displaying CH '+kp(start)+' to '+kp(end)+' ('+count+' crossings). Original data and exports unchanged.';
+    el('engViewStatus').textContent='Displaying CH '+kp(start)+' to '+kp(end)+' ('+count+' crossings). All crossing markers remain at their exact KPs; original exports unchanged.';
   };
   el('engApplyView').addEventListener('click',()=>applyView(false));
   el('engResetView').addEventListener('click',()=>applyView(true));
@@ -1392,6 +1392,8 @@ qcUpdateControls();
       // Exact crossing chainages are preserved; the terrain series is not resampled.
       // Draw every crossing label in its own column above the RL plotting area.
       // The chart becomes horizontally scrollable when crossings are crowded.
+      // Compact annotation cards: exact crossing markers, short leaders, no collisions.
+      // Full crossing descriptions remain available in the table below the chart.
       const crossingAnnotationPlugin={
         id:'engineeringCrossingAnnotations',
         afterDraw(ch){
@@ -1400,16 +1402,18 @@ qcUpdateControls();
             .filter(c=>Number.isFinite(c.ch)&&c.ch>=xaxis.min&&c.ch<=xaxis.max)
             .sort((a,b)=>a.ch-b.ch||a._index-b._index);
           if(!visible.length)return;
-          const top=area.top-14;
-          const left=area.left+10,right=area.right-10;
-          const gap=(right-left)/Math.max(1,visible.length);
-          ctx.save();ctx.font='600 11px Segoe UI, Arial, sans-serif';
+          const columnWidth=160;
+          const labelTop=area.top-82;
+          const cardHeight=63;
+          const step=area.width/visible.length;
+          ctx.save();
+          const trim=(value,max)=>{const v=String(value??'').trim();return v.length>max?v.slice(0,max-1)+'…':v;};
           visible.forEach((c,i)=>{
             const trueX=xaxis.getPixelForValue(c.ch);
-            const labelX=left+gap*(i+.5);
-            const id=String(c.crossing_id??c.id??'').trim();
-            const desc=String(c.description??'').trim();
-            const label='CH '+kp(c.ch)+(id?' | '+id:'')+(desc?' | '+desc:'');
+            const cardX=area.left+step*(i+.5);
+            const cardLeft=cardX-columnWidth/2;
+            const id=trim(c.crossing_id??c.id??'CROSSING',19);
+            const desc=trim(c.description??'',25);
             let ground=null;
             for(let j=1;j<samples.length;j++){
               const a=samples[j-1],b=samples[j],ax=Number(a.chainage_m),bx=Number(b.chainage_m);
@@ -1418,12 +1422,20 @@ qcUpdateControls();
               }
             }
             const groundY=ground===null?area.bottom:yaxis.getPixelForValue(ground);
-            ctx.strokeStyle='#dc2626';ctx.fillStyle='#b91c1c';ctx.lineWidth=1;
+            // The crossing itself stays at the exact chainage, regardless of label offset.
+            ctx.strokeStyle='rgba(220,38,38,.72)';ctx.lineWidth=1.1;
             ctx.beginPath();ctx.moveTo(trueX,groundY);ctx.lineTo(trueX,area.top);
-            ctx.lineTo(labelX,top);ctx.stroke();
-            ctx.beginPath();ctx.arc(trueX,groundY,2.4,0,Math.PI*2);ctx.fill();
-            ctx.save();ctx.translate(labelX,top-4);ctx.rotate(-Math.PI/2);
-            ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(label,0,0);ctx.restore();
+            ctx.lineTo(cardX,labelTop+cardHeight+3);ctx.stroke();
+            ctx.fillStyle='#dc2626';ctx.beginPath();ctx.arc(trueX,groundY,2.4,0,Math.PI*2);ctx.fill();
+            ctx.fillStyle='#fffafa';ctx.strokeStyle='#fecaca';ctx.lineWidth=1;
+            ctx.beginPath();ctx.roundRect(cardLeft,labelTop,columnWidth,cardHeight,5);ctx.fill();ctx.stroke();
+            ctx.textAlign='center';ctx.textBaseline='middle';
+            ctx.fillStyle='#991b1b';ctx.font='700 11px Segoe UI, Arial, sans-serif';
+            ctx.fillText('CH '+kp(c.ch),cardX,labelTop+13);
+            ctx.fillStyle='#b91c1c';ctx.font='600 11px Segoe UI, Arial, sans-serif';
+            ctx.fillText(id,cardX,labelTop+32);
+            ctx.fillStyle='#64748b';ctx.font='10px Segoe UI, Arial, sans-serif';
+            ctx.fillText(desc,cardX,labelTop+49);
           });
           ctx.restore();
         }
@@ -1437,9 +1449,9 @@ qcUpdateControls();
         const end=Number(el('engViewEnd').value)||Number(result.route_length_m);
         const count=(result.crossings||[]).filter(c=>Number(c.chainage_m)>=start&&Number(c.chainage_m)<=end).length;
         const viewport=el('engChartViewport');
-        const required=Math.max(viewport.clientWidth, count*21+130);
+        const required=Math.max(viewport.clientWidth, count*166+100);
         el('engChartInner').style.width=Math.ceil(required)+'px';
-        el('engChartInner').style.height='700px';
+        el('engChartInner').style.height='540px';
         if(chart)chart.resize();
         return count;
       };
@@ -1447,7 +1459,7 @@ qcUpdateControls();
         type:'line',data:{datasets},plugins:[crossingAnnotationPlugin],
         options:{responsive:true,maintainAspectRatio:false,
           // Reserve a dedicated top area for the crossing annotations.
-          layout:{padding:{top:315,right:16,left:8,bottom:4}},
+          layout:{padding:{top:100,right:16,left:8,bottom:4}},
           interaction:{mode:'nearest',intersect:false},
           scales:{
             x:{type:'linear',min:0,max:Math.ceil(Number(payload.route_length_m)/100)*100,
@@ -1463,7 +1475,7 @@ qcUpdateControls();
       el('engViewStart').value='0';
       el('engViewEnd').value=String(Math.ceil(Number(payload.route_length_m)));
       resizeEngineeringChart();
-      el('engViewStatus').textContent='Showing full route. Adjust start/end and click Apply chainage range.';
+      el('engViewStatus').textContent='Showing full route. Crossing labels use compact cards; scroll horizontally to view all crossings.';
       const headers='<tr><th>Chainage</th><th>Crossing ID</th><th>Description</th></tr>';
       const rows=crossings.map(c=>'<tr><td>'+safe(c.kp||kp(c.chainage_m))+'</td><td>'+safe(c.crossing_id??c.id??'')+'</td><td>'+safe(c.description??'')+'</td></tr>').join('');
       el('engCrossingList').innerHTML='<table class="gdb-table"><thead>'+headers+'</thead><tbody>'+(rows||'<tr><td colspan="3">No crossing intersections returned.</td></tr>')+'</tbody></table>';
