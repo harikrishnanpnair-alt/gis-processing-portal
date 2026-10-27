@@ -6,6 +6,7 @@
 <title>GIS Processing Portal</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
 
 <style>
 :root{
@@ -102,6 +103,24 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
 .gdb-downloads button{width:auto;background:#047857;color:white}
 .gdb-row-warning{background:#fff7e6}
 @media(max-width:850px){.gdb-input-grid,.gdb-config-grid{grid-template-columns:1fr}.gdb-config-grid button{width:100%}}
+
+/* Engineering planimetry synchronized with longitudinal profile */
+#engPlanPanel{margin:14px 0 18px;border:1px solid #d7dfeb;border-radius:12px;overflow:hidden;background:#fff}
+.eng-plan-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;padding:11px 14px;background:#f1f6ff;border-bottom:1px solid #d7dfeb}
+.eng-plan-bar strong{color:#164a82;font-size:15px}
+.eng-plan-bar .small{margin:0}
+#engPlanMap{height:450px;width:100%;background:#e4eaf0}
+.eng-plan-footer{display:flex;gap:12px;flex-wrap:wrap;align-items:center;padding:9px 14px;font-size:12px;color:#475569}
+.eng-plan-key{display:inline-flex;align-items:center;gap:6px}
+.eng-plan-key i{display:inline-block;width:15px;height:5px;border-radius:2px}
+.eng-plan-kp{font:700 11px Segoe UI,Arial,sans-serif;color:#fff;text-shadow:0 1px 3px #111827,0 -1px 3px #111827;white-space:nowrap}
+.eng-plan-label{font:700 11px Segoe UI,Arial,sans-serif;background:#fff;border:1px solid var(--c,#64748b);border-radius:6px;color:var(--c,#64748b);padding:3px 5px;white-space:nowrap;box-shadow:0 1px 5px #0002}
+.eng-plan-legend{background:#fff;padding:9px 11px;border-radius:7px;box-shadow:0 2px 10px #0002;font:12px Segoe UI,Arial,sans-serif;line-height:1.8}
+.eng-plan-legend b{display:block;margin-bottom:3px}
+.eng-plan-legend span{display:block;white-space:nowrap}
+.eng-plan-legend em{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px}
+@media(max-width:650px){#engPlanMap{height:340px}.eng-plan-bar{align-items:flex-start}}
+
 </style>
 </head>
 
@@ -331,7 +350,17 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
       <div class="tools" style="margin:0 0 12px"><button type="button" id="engApplyView" class="secondary">Apply chainage range</button><button type="button" id="engResetView" class="secondary">Full route</button></div>
       <div id="engViewStatus" class="small" aria-live="polite">Set a start and end chainage to zoom the profile without resampling.</div>
       <div class="profile-stats"><div class="profile-stat"><b id="engLength">—</b><span>Route length</span></div><div class="profile-stat"><b id="engSamples">—</b><span>Samples</span></div><div class="profile-stat"><b id="engCrossingsCount">—</b><span>Crossings</span></div><div class="profile-stat"><b id="engElevationRange">—</b><span>Ground RL range</span></div></div>
-      <div id="engChartViewport" style="width:100%;overflow-x:auto;border:1px solid #e2e8f0;border-radius:8px"><div id="engChartInner" style="height:525px;min-width:100%"><canvas id="engChart"></canvas></div></div>
+      <div id="engPlanPanel">
+        <div class="eng-plan-bar"><div><strong>Pipeline Planimetry — Satellite View</strong><div class="small">Actual route coordinates · same chainage direction as ground profile</div></div><div class="tools"><button type="button" id="engPlanFit" class="secondary">Fit selected chainage</button><button type="button" id="engPlanGrid" class="secondary" aria-pressed="true">UTM grid: On</button></div></div>
+        <div id="engPlanMap" aria-label="Engineering pipeline planimetry satellite map"></div>
+        <div class="eng-plan-footer"><span class="eng-plan-key"><i style="background:#dc2626"></i>Pipeline centerline</span><span class="eng-plan-key"><i style="background:#e97808"></i>Road</span><span class="eng-plan-key"><i style="background:#1769ef"></i>Cable</span><span class="eng-plan-key"><i style="background:#8b38da"></i>Fence / Trench</span><span class="eng-plan-key"><i style="background:#64748b"></i>Unknown</span><span id="engPlanStatus">Generate profile to load planimetry.</span></div>
+      </div>
+      <div id="engStripPanel" style="margin:12px 0;border:1px solid #d7dfeb;border-radius:10px;padding:12px;background:#fff">
+        <div style="font-weight:700;margin-bottom:6px">Pipeline Strip Map — Centerline & Chainage</div>
+        <div class="small" style="margin-bottom:8px">Schematic chainage strip; crossings and KP positions follow the engineering profile. Satellite planimetry is displayed above.</div>
+        <div id="engStripViewport" style="overflow-x:auto;width:100%"><svg id="engStripSvg" role="img" aria-label="Pipeline chainage strip map" style="display:block;height:145px;min-width:100%"></svg></div>
+      </div>
+      <div id="engChartViewport" style="width:100%;overflow-x:auto;border:1px solid #e2e8f0;border-radius:8px"><div id="engChartInner" style="height:550px;min-width:100%"><canvas id="engChart"></canvas></div></div>
       <div id="engCrossingLegend" style="display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:center;margin:12px 0 8px;font:12px Segoe UI,Arial,sans-serif;color:#475569"><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:20px;height:4px;background:#15803d;border-radius:3px"></i>Existing ground (DEM)</span><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:12px;background:#ea7800;border-radius:3px"></i>Road / Plant</span><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:12px;background:#1463ed;border-radius:3px"></i>Cable / Telecom</span><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:12px;background:#8434d9;border-radius:3px"></i>Fence / Trench</span><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:12px;background:#e02d43;border-radius:3px"></i>Other</span><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:12px;background:#64748b;border-radius:3px"></i>N/A</span></div>
       <div id="engCrossingList" class="gdb-table-wrap"></div>
     </div>
@@ -1327,6 +1356,127 @@ qcUpdateControls();
   el('engSurface').disabled=true;
   el('engDownloadDxf').addEventListener('click',()=>download(result?.downloads?.dxf));
   el('engDownloadExcel').addEventListener('click',()=>download(result?.downloads?.excel));
+  // The API returns easting/northing for the DEM samples. Convert those
+  // projected coordinates to WGS84 for Leaflet; do not change route stationing.
+  let planMap=null,planGroup=null,planGrid=null,planExtent=null;
+  if(typeof proj4==='function'){
+    proj4.defs('EPSG:32639','+proj=utm +zone=39 +datum=WGS84 +units=m +no_defs');
+    proj4.defs('EPSG:32640','+proj=utm +zone=40 +datum=WGS84 +units=m +no_defs');
+    proj4.defs('EPSG:27039','+proj=utm +zone=39 +a=6378249.145 +rf=293.465 +units=m +no_defs');
+    proj4.defs('EPSG:27040','+proj=utm +zone=40 +a=6378249.145 +rf=293.465 +units=m +no_defs');
+  }
+  const planColors=c=>{const d=String(c.description??'').toLowerCase();return /road|track|highway|plant/.test(d)?'#e97808':/cable|electrical|fiber|telecom/.test(d)?'#1769ef':/trench|fence/.test(d)?'#8b38da':/n\/?a|unknown/.test(d)?'#64748b':'#df3046';};
+  const ensurePlanMap=()=>{
+    if(planMap)return;
+    planMap=L.map('engPlanMap',{preferCanvas:true,zoomControl:true});
+    const sat=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Imagery © Esri, Maxar and contributors'}).addTo(planMap);
+    const street=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'});
+    L.control.layers({'Satellite (Esri)':sat,'Street Map':street},null,{collapsed:true}).addTo(planMap);
+    L.control.scale({imperial:false,metric:true}).addTo(planMap);
+    planGroup=L.layerGroup().addTo(planMap);planGrid=L.layerGroup().addTo(planMap);
+    planMap.setView([24.45,54.38],8);
+    el('engPlanFit').addEventListener('click',()=>{if(planExtent&&planExtent.isValid())planMap.fitBounds(planExtent.pad(.20),{maxZoom:18});});
+    el('engPlanGrid').addEventListener('click',()=>{
+      const on=planMap.hasLayer(planGrid);if(on)planMap.removeLayer(planGrid);else planGrid.addTo(planMap);
+      el('engPlanGrid').textContent='UTM grid: '+(on?'Off':'On');el('engPlanGrid').setAttribute('aria-pressed',String(!on));
+    });
+  };
+  const renderEngineeringPlan=()=>{
+    if(!result)return;
+    ensurePlanMap();planGroup.clearLayers();planGrid.clearLayers();planExtent=null;
+    const epsg='EPSG:'+el('engEpsg').value;
+    if(typeof proj4!=='function'){
+      el('engPlanStatus').textContent='Projection library unavailable; reload when online.';return;
+    }
+    const points=(result.samples||[]).map(p=>({ch:Number(p.chainage_m),x:Number(p.easting),y:Number(p.northing)}))
+      .filter(p=>Number.isFinite(p.ch)&&Number.isFinite(p.x)&&Number.isFinite(p.y)).sort((a,b)=>a.ch-b.ch);
+    if(points.length<2){el('engPlanStatus').textContent='Backend did not return sufficient route coordinates.';return;}
+    const start=Math.max(0,Number(el('engViewStart').value)||0);
+    const end=Math.min(Number(result.route_length_m),Number(el('engViewEnd').value)||Number(result.route_length_m));
+    if(end<=start)return;
+    const at=ch=>{
+      if(ch<=points[0].ch)return {...points[0],ch};
+      if(ch>=points[points.length-1].ch)return {...points[points.length-1],ch};
+      let lo=0,hi=points.length-1;
+      while(hi-lo>1){const mid=(lo+hi)>>1;if(points[mid].ch<=ch)lo=mid;else hi=mid;}
+      const a=points[lo],b=points[hi],t=(ch-a.ch)/(b.ch-a.ch||1);
+      return {ch,x:a.x+t*(b.x-a.x),y:a.y+t*(b.y-a.y)};
+    };
+    const toLL=p=>{const q=proj4(epsg,'EPSG:4326',[p.x,p.y]);return [q[1],q[0]];};
+    const selected=[at(start),...points.filter(p=>p.ch>start&&p.ch<end),at(end)];
+    const ll=selected.map(toLL);
+    if(ll.some(p=>!p.every(Number.isFinite))){el('engPlanStatus').textContent='Invalid coordinate transformation. Check working CRS.';return;}
+    L.polyline(ll,{color:'#fff',weight:8,opacity:.95}).addTo(planGroup);
+    L.polyline(ll,{color:'#c21f34',weight:4,opacity:1}).addTo(planGroup);
+    // Distinctly show the route direction without altering engineering stationing.
+    L.circleMarker(ll[0],{radius:6,color:'#fff',weight:2,fillColor:'#16a34a',fillOpacity:1}).bindTooltip('START CH '+kp(start)).addTo(planGroup);
+    L.circleMarker(ll[ll.length-1],{radius:6,color:'#fff',weight:2,fillColor:'#dc2626',fillOpacity:1}).bindTooltip('END CH '+kp(end)).addTo(planGroup);
+    const step=(end-start)>1500?250:(end-start)>600?100:50;
+    const labelIcon=(txt)=>L.divIcon({className:'',html:'<div class="eng-plan-kp">'+safe(txt)+'</div>',iconSize:[75,16],iconAnchor:[35,-6]});
+    for(let ch=Math.ceil(start/step)*step;ch<=end;ch+=step){
+      const p=at(ch),pos=toLL(p);
+      L.circleMarker(pos,{radius:2.5,color:'#fff',weight:1,fillColor:'#dc2626',fillOpacity:1}).addTo(planGroup);
+      L.marker(pos,{icon:labelIcon(kp(ch)) ,interactive:false}).addTo(planGroup);
+    }
+    const cr=(result.crossings||[]).filter(c=>Number(c.chainage_m)>=start&&Number(c.chainage_m)<=end)
+      .sort((a,b)=>Number(a.chainage_m)-Number(b.chainage_m));
+    cr.forEach((c,i)=>{
+      const ch=Number(c.chainage_m),pos=toLL(at(ch)),color=planColors(c);
+      const id=String(c.id??c.crossing_id??'Crossing'),desc=String(c.description??'');
+      L.circleMarker(pos,{radius:5,color:'#fff',weight:1.5,fillColor:color,fillOpacity:1})
+        .bindPopup('<b>'+safe(id)+'</b><div>CH '+safe(kp(ch))+'</div><div>'+safe(desc)+'</div>').addTo(planGroup);
+      // Display every crossing; avoid overlapping permanent labels at dense KPs.
+      // Their IDs and details remain accessible via popup/hover.
+      const label=safe(id)+' · '+safe(kp(ch));
+      const icon=L.divIcon({className:'',html:'<div class="eng-plan-label" style="--c:'+color+'">'+label+'</div>',iconSize:[110,24],iconAnchor:[-8,32]});
+      const marker=L.marker(pos,{icon,interactive:false,opacity:1});
+      if(cr.length<=12 || i%Math.ceil(cr.length/12)===0)marker.addTo(planGroup);
+    });
+    // UTM coordinate grid in source metres, not a geographic degree grid.
+    const xs=selected.map(p=>p.x),ys=selected.map(p=>p.y);
+    const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+    const gridStep=(end-start)>1500?250:100;
+    const pad=Math.max(100,gridStep);
+    for(let x=Math.floor((minX-pad)/gridStep)*gridStep;x<=maxX+pad;x+=gridStep){
+      const a=toLL({x,y:minY-pad}),b=toLL({x,y:maxY+pad});
+      L.polyline([a,b],{color:'#5ca2d0',weight:.7,opacity:.52,interactive:false}).addTo(planGrid);
+    }
+    for(let y=Math.floor((minY-pad)/gridStep)*gridStep;y<=maxY+pad;y+=gridStep){
+      const a=toLL({x:minX-pad,y}),b=toLL({x:maxX+pad,y});
+      L.polyline([a,b],{color:'#5ca2d0',weight:.7,opacity:.52,interactive:false}).addTo(planGrid);
+    }
+    planExtent=L.latLngBounds(ll);
+    planMap.invalidateSize();planMap.fitBounds(planExtent.pad(.28),{maxZoom:18});
+    el('engPlanStatus').textContent='CH '+kp(start)+'–'+kp(end)+' · '+cr.length+' crossings · '+epsg+' · Esri satellite';
+  };
+
+  const renderEngineeringStrip=()=>{
+    if(!result)return;
+    const start=Math.max(0,Number(el('engViewStart').value)||0);
+    const end=Math.min(Number(result.route_length_m),Number(el('engViewEnd').value)||Number(result.route_length_m));
+    if(end<=start)return;
+    const crossings=(result.crossings||[]).filter(c=>Number(c.chainage_m)>=start&&Number(c.chainage_m)<=end);
+    const viewport=el('engStripViewport'),svg=el('engStripSvg');
+    const width=Math.max(viewport.clientWidth,crossings.length*104+180,650),height=145;
+    svg.setAttribute('viewBox',`0 0 ${width} ${height}`);svg.setAttribute('width',width);
+    const left=60,right=width-40,y=95,at=ch=>left+(ch-start)/(end-start)*(right-left);
+    const esc=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    let parts=[`<rect x="0" y="0" width="${width}" height="${height}" fill="white"/>`,
+      `<line x1="${left}" y1="${y}" x2="${right}" y2="${y}" stroke="#b91c1c" stroke-width="5" stroke-linecap="round"/>`];
+    const step=(end-start)<=600?50:(end-start)<=1500?100:250;
+    for(let ch=Math.ceil(start/step)*step;ch<=end;ch+=step){const x=at(ch);
+      parts.push(`<line x1="${x}" y1="${y-9}" x2="${x}" y2="${y+9}" stroke="#1e293b" stroke-width="1.3"/>`,
+        `<text x="${x}" y="${y+26}" font-size="11" text-anchor="middle" fill="#334155">${esc(kp(ch))}</text>`);
+    }
+    crossings.forEach((c,i)=>{const x=at(Number(c.chainage_m)),color=planColors(c),id=esc(c.crossing_id??c.id??'Crossing'),desc=esc(c.description??'');
+      const ty=20+(i%3)*13;
+      parts.push(`<line x1="${x}" y1="${y-4}" x2="${x}" y2="${ty+7}" stroke="${color}" stroke-width="1.5"/>`,
+        `<circle cx="${x}" cy="${y}" r="4" fill="${color}" stroke="white" stroke-width="1"/>`,
+        `<text x="${x+4}" y="${ty}" font-size="11" font-weight="700" fill="${color}" transform="rotate(-35 ${x+4} ${ty})"><title>${id}: ${desc}</title>${id}</text>`);
+    });
+    parts.push(`<text x="${left}" y="139" font-size="10" fill="#64748b">Schematic strip · chainage proportional · not a surveyed plan</text>`);
+    svg.innerHTML=parts.join('');
+  };
   const applyView=(reset=false)=>{
     if(!chart||!result){el('engViewStatus').textContent='Generate the engineering profile first.';return;}
     const length=Number(result.route_length_m);
@@ -1340,9 +1490,11 @@ qcUpdateControls();
     chart.update();
     const count=(result.crossings||[]).filter(c=>Number(c.chainage_m)>=start&&Number(c.chainage_m)<=end).length;
     const viewport=el('engChartViewport');
-    const required=Math.max(viewport.clientWidth,count*92+130);
+    const required=Math.max(viewport.clientWidth,count*104+180);
     el('engChartInner').style.width=Math.ceil(required)+'px';
     chart.resize();chart.update();
+    renderEngineeringPlan();
+    renderEngineeringStrip();
     el('engViewStatus').textContent='Displaying CH '+kp(start)+' to '+kp(end)+' ('+count+' crossings). All crossing markers remain at their exact KPs; original exports unchanged.';
   };
   el('engApplyView').addEventListener('click',()=>applyView(false));
@@ -1389,8 +1541,8 @@ qcUpdateControls();
       el('engElevationRange').textContent=z.length?Math.min(...z).toFixed(1)+'–'+Math.max(...z).toFixed(1)+' m':'No elevations';
       if(chart)chart.destroy();
       const datasets=[{label:'Existing ground (DEM)',data:samples.filter(p=>p.elevation_m!==null).map(p=>({x:Number(p.chainage_m),y:Number(p.elevation_m)})),borderColor:'#15803d',backgroundColor:'rgba(22,163,74,0.15)',fill:{target:'origin'},pointRadius:0,borderWidth:2.5,showLine:true,parsing:false}];
-      // Compact CAD-style vertical tags. Each KP marker is anchored to the
-      // true station; only the annotation position may move to avoid collisions.
+      // Bold, unboxed labels. Full crossing descriptions are wrapped into
+      // multiple vertical columns instead of being truncated.
       const crossingAnnotationPlugin={
         id:'engineeringCrossingAnnotations',
         afterDatasetsDraw(ch){
@@ -1399,14 +1551,7 @@ qcUpdateControls();
             .filter(c=>Number.isFinite(c.ch)&&c.ch>=xaxis.min&&c.ch<=xaxis.max)
             .sort((a,b)=>a.ch-b.ch||a._index-b._index);
           if(!visible.length)return;
-          const tagW=39,tagH=166,gap=7;
-          const colorFor=c=>{
-            const d=String(c.description??'').toLowerCase();
-            return /road|track|highway|plant/.test(d)?'#e97808':
-              /cable|electrical|fiber|telecom/.test(d)?'#1769ef':
-              /trench|fence/.test(d)?'#8b38da':
-              /n\/?a|unknown/.test(d)?'#64748b':'#df3046';
-          };
+          const colorFor=c=>planColors(c);
           const groundAt=station=>{
             for(let j=1;j<samples.length;j++){
               const a=samples[j-1],b=samples[j],ax=Number(a.chainage_m),bx=Number(b.chainage_m);
@@ -1415,65 +1560,40 @@ qcUpdateControls();
             }
             return null;
           };
-          // Pack tags near their actual stations, instead of distributing them
-          // evenly across the entire graph (which produced long diagonal leaders).
-          const minSep=tagW+gap;
-          const minX=area.left+tagW/2+4,maxX=area.right-tagW/2-4;
+          const spacing=96;
           const ideal=visible.map(c=>xaxis.getPixelForValue(c.ch));
-          const positions=ideal.map((x,i)=>Math.max(minX,Math.min(maxX,x)));
-          // Two compact stagger rows allow dense labels without huge offsets.
-          const rows=visible.map((_,i)=>i%2);
-          for(let row=0;row<2;row++){
-            const indices=visible.map((_,i)=>i).filter(i=>rows[i]===row);
-            for(let j=1;j<indices.length;j++){
-              const i=indices[j],prev=indices[j-1];
-              positions[i]=Math.max(positions[i],positions[prev]+minSep);
-            }
-            if(indices.length && positions[indices[indices.length-1]]>maxX){
-              const excess=positions[indices[indices.length-1]]-maxX;
-              indices.forEach(i=>positions[i]-=excess);
-            }
-            if(indices.length && positions[indices[0]]<minX){
-              const shortage=minX-positions[indices[0]];
-              indices.forEach(i=>positions[i]+=shortage);
-            }
-          }
+          const positions=ideal.map(x=>x);
+          // Move only the labels, not the station dots.
+          for(let i=1;i<positions.length;i++)positions[i]=Math.max(positions[i],positions[i-1]+spacing);
+          const excess=positions[positions.length-1]-(area.right-32);
+          if(excess>0)positions.forEach((_,i)=>positions[i]-=excess);
+          if(positions[0]<area.left+20){const dx=area.left+20-positions[0];positions.forEach((_,i)=>positions[i]+=dx);}
           ctx.save();
           visible.forEach((c,i)=>{
-            const trueX=ideal[i],labelX=positions[i];
-            const ground=groundAt(c.ch);
+            const trueX=ideal[i],labelX=positions[i],ground=groundAt(c.ch);
             const groundY=ground===null?area.bottom:yaxis.getPixelForValue(ground);
-            const color=colorFor(c);
-            const row=rows[i];
-            // Place labels above the ground with a short marker. Only a few
-            // pixels of vertical staggering are used; no full-height lines.
-            const tagBottom=Math.max(area.top+tagH+6,groundY-15-row*9);
-            const tagTop=tagBottom-tagH,tagLeft=labelX-tagW/2;
-            ctx.strokeStyle=color;ctx.lineWidth=1.3;ctx.globalAlpha=.83;
-            ctx.setLineDash([3,3]);
-            ctx.beginPath();ctx.moveTo(trueX,groundY-3);ctx.lineTo(trueX,groundY-12);ctx.stroke();
+            const color=colorFor(c),id=String(c.crossing_id??c.id??'CROSSING').trim();
+            const desc=String(c.description??'').trim()||'N/A';
+            const top=area.top-18;
+            ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.setLineDash([3,3]);
+            ctx.beginPath();ctx.moveTo(trueX,groundY-3);ctx.lineTo(trueX,groundY-14);ctx.stroke();
             ctx.setLineDash([]);
-            // Small elbow at the ground, not a diagonal across the RL grid.
-            ctx.beginPath();ctx.moveTo(trueX,groundY-12);
-            ctx.lineTo(labelX,groundY-12);
-            ctx.lineTo(labelX,tagBottom+2);ctx.stroke();
-            ctx.globalAlpha=1;
-            ctx.fillStyle=color;ctx.beginPath();ctx.arc(trueX,groundY,3.2,0,Math.PI*2);ctx.fill();
-            ctx.fillStyle='#fff';ctx.strokeStyle=color;ctx.lineWidth=1.45;
-            ctx.beginPath();ctx.roundRect(tagLeft,tagTop,tagW,tagH,6);ctx.fill();ctx.stroke();
-            ctx.fillStyle=color;ctx.beginPath();ctx.roundRect(tagLeft,tagBottom-4,tagW,4,[0,0,6,6]);ctx.fill();
-            ctx.save();ctx.translate(labelX,tagBottom-10);ctx.rotate(-Math.PI/2);
-            ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle=color;
-            ctx.font='600 11.5px Segoe UI, Arial, sans-serif';
-            const id=String(c.crossing_id??c.id??'CROSSING').trim();
-            const desc=String(c.description??'').trim();
-            let label='CH '+kp(c.ch)+' | '+id+' | '+desc;
-            const limit=tagH-19;
-            if(ctx.measureText(label).width>limit){
-              while(label.length>8&&ctx.measureText(label+'…').width>limit)label=label.slice(0,-1);
-              label+='…';
+            // Horizontal offset stays above the terrain line.
+            if(Math.abs(labelX-trueX)>2){ctx.beginPath();ctx.moveTo(trueX,groundY-14);ctx.lineTo(labelX,groundY-14);ctx.stroke();}
+            ctx.fillStyle=color;ctx.beginPath();ctx.arc(trueX,groundY,3.5,0,Math.PI*2);ctx.fill();
+            // Rotate text upward, with line wrapping for complete descriptions.
+            ctx.save();ctx.translate(labelX,top+158);ctx.rotate(-Math.PI/2);
+            ctx.fillStyle=color;ctx.textAlign='left';ctx.textBaseline='middle';
+            ctx.font='bold 12px Segoe UI, Arial, sans-serif';
+            const prefix='CH '+kp(c.ch)+' | '+id;
+            ctx.fillText(prefix,0,-12);
+            // Preserve complete description by splitting into lines, never ellipsis.
+            const words=desc.split(/\s+/),lines=[];let line='';
+            for(const word of words){const trial=line?line+' '+word:word;
+              if(ctx.measureText(trial).width>145&&line){lines.push(line);line=word;}else line=trial;
             }
-            ctx.fillText(label,0,0);
+            if(line)lines.push(line);
+            lines.forEach((part,j)=>ctx.fillText(part,0,5+j*14));
             ctx.restore();
           });
           ctx.restore();
@@ -1488,9 +1608,9 @@ qcUpdateControls();
         const end=Number(el('engViewEnd').value)||Number(result.route_length_m);
         const count=(result.crossings||[]).filter(c=>Number(c.chainage_m)>=start&&Number(c.chainage_m)<=end).length;
         const viewport=el('engChartViewport');
-        const required=Math.max(viewport.clientWidth, count*92+130);
+        const required=Math.max(viewport.clientWidth, count*104+180);
         el('engChartInner').style.width=Math.ceil(required)+'px';
-        el('engChartInner').style.height='525px';
+        el('engChartInner').style.height='550px';
         if(chart)chart.resize();
         return count;
       };
@@ -1498,7 +1618,7 @@ qcUpdateControls();
         type:'line',data:{datasets},plugins:[crossingAnnotationPlugin],
         options:{responsive:true,maintainAspectRatio:false,
           // Reserve a dedicated top area for the crossing annotations.
-          layout:{padding:{top:188,right:16,left:8,bottom:4}},
+          layout:{padding:{top:210,right:16,left:8,bottom:4}},
           interaction:{mode:'nearest',intersect:false},
           scales:{
             x:{type:'linear',min:0,max:Math.ceil(Number(payload.route_length_m)/100)*100,
@@ -1518,7 +1638,8 @@ qcUpdateControls();
       const headers='<tr><th>Chainage</th><th>Crossing ID</th><th>Description</th></tr>';
       const rows=crossings.map(c=>'<tr><td>'+safe(c.kp||kp(c.chainage_m))+'</td><td>'+safe(c.crossing_id??c.id??'')+'</td><td>'+safe(c.description??'')+'</td></tr>').join('');
       el('engCrossingList').innerHTML='<table class="gdb-table"><thead>'+headers+'</thead><tbody>'+(rows||'<tr><td colspan="3">No crossing intersections returned.</td></tr>')+'</tbody></table>';
-      el('engResults').classList.remove('hidden');el('engDownloads').classList.remove('hidden');
+      el('engResults').classList.remove('hidden');
+      setTimeout(()=>{renderEngineeringPlan();renderEngineeringStrip();},50);el('engDownloads').classList.remove('hidden');
       status('Engineering profile generated: '+samples.length+' ground samples and '+crossings.length+' crossing intersections. DXF and Excel are ready.','ok');
     }catch(e){status('Engineering profile failed: '+e.message+'. If this is a network error, check the Render service and CORS setting.','error');}
     finally{btn.disabled=false;}
