@@ -108,7 +108,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
 <body>
 <header>
   <div class="brand">GIS Processing Portal</div>
-  <div class="pill">Trial v0.2 • DXF / KMZ / KML + SRTM Profile</div>
+  <div class="pill">Trial v0.3 • GIS Conversion / QC + Engineering Profile</div>
 </header>
 
 <main>
@@ -287,6 +287,47 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
 
   <div class="profile-note">
     Trial profile only. SRTM/ASTER terrain data are not a replacement for detailed topographic survey elevations.
+  </div>
+</section>
+
+
+<section class="card section-card" id="engineeringProfileSection">
+  <div class="section-head"><div><h2>Engineering Longitudinal Profile — New Engine</h2>
+  <div class="small">Independent Render service • route chainage, crossing annotation, terrain and CAD/Excel deliverables</div></div></div>
+  <div class="profile-body">
+    <div class="grid">
+      <div>
+        <label for="engRoute">Pipeline alignment (KMZ / KML / GeoJSON)</label>
+        <input id="engRoute" type="file" accept=".kmz,.kml,.geojson,.json">
+        <div class="small">Select the pipeline route here, or use the KMZ/KML uploaded in New Processing Job.</div>
+        <label for="engCrossing">Crossings (Shapefile ZIP / GeoJSON / KML / KMZ) — optional</label>
+        <input id="engCrossing" type="file" accept=".zip,.geojson,.json,.kml,.kmz">
+        <div class="small">For shapefiles, ZIP together the .shp, .shx, .dbf and .prj files.</div>
+        <label for="engSurface">Custom DEM raster — optional</label>
+        <input id="engSurface" type="file" accept=".tif,.tiff,.img">
+        <div class="small">GeoTIFF or ERDAS IMG. TIN is planned but not supported by this backend version.</div>
+      </div>
+      <div>
+        <div class="gdb-input-grid">
+          <div><label for="engSource">Elevation source</label><select id="engSource"><option value="srtm">Online SRTM</option><option value="aster">ASTER (requires configured server provider)</option><option value="dem">Uploaded DEM</option></select></div>
+          <div><label for="engEpsg">Profile working CRS</label><select id="engEpsg"><option value="32640">WGS84 UTM 40N (32640)</option><option value="32639">WGS84 UTM 39N (32639)</option><option value="27040">Nahrwan 1967 UTM 40N (27040)</option><option value="27039">Nahrwan 1967 UTM 39N (27039)</option></select></div>
+          <div><label for="engInterval">Sample interval (m)</label><input id="engInterval" type="number" min="1" max="1000" value="25"></div>
+          <div><label for="engIdField">Crossing ID attribute</label><input id="engIdField" type="text" value="Crossing_ID"></div>
+          <div><label for="engDescField">Crossing description attribute</label><input id="engDescField" type="text" value="Description"></div>
+          <div><label for="engHscale">Horizontal scale 1:</label><input id="engHscale" type="number" value="2500" min="100"></div>
+          <div><label for="engVscale">Vertical scale 1:</label><input id="engVscale" type="number" value="100" min="10"></div>
+        </div>
+        <button id="engGenerate" class="green">Generate Engineering Profile</button>
+        <div id="engStatus" class="status" role="status" aria-live="polite">Ready to upload a route. The new engine runs independently from GIS conversion and QC.</div>
+        <div id="engDownloads" class="gdb-downloads hidden"><button id="engDownloadDxf" type="button">Download Engineering DXF</button><button id="engDownloadExcel" type="button">Download Engineering Excel</button></div>
+      </div>
+    </div>
+    <div id="engResults" class="hidden" style="margin-top:20px">
+      <div class="profile-stats"><div class="profile-stat"><b id="engLength">—</b><span>Route length</span></div><div class="profile-stat"><b id="engSamples">—</b><span>Samples</span></div><div class="profile-stat"><b id="engCrossingsCount">—</b><span>Crossings</span></div><div class="profile-stat"><b id="engElevationRange">—</b><span>Ground RL range</span></div></div>
+      <div class="profile-chart-wrap" style="height:400px"><canvas id="engChart"></canvas></div>
+      <div id="engCrossingList" class="gdb-table-wrap"></div>
+    </div>
+    <p class="small">Crossing chainages are calculated in the selected projected CRS. DEM-derived ground levels are indicative and not verified survey RLs. The current backend does not calculate pipe design elevations or full company-specific engineering bands.</p>
   </div>
 </section>
 
@@ -1263,5 +1304,59 @@ gdbById("qcRun").addEventListener("click",async()=>{
 qcUpdateControls();
 </script>
 
+
+<script>
+(() => {
+  'use strict';
+  const BASE='https://pipeline-profile-engine.onrender.com';
+  const el=id=>document.getElementById(id);
+  let result=null, chart=null;
+  const status=(message,kind='')=>{el('engStatus').className='status '+kind;el('engStatus').textContent=message;};
+  const kp=(v)=>{const m=Math.round(Number(v)*1000);const km=Math.floor(m/1000000);const rest=m-km*1000000;return km+'+'+String(Math.floor(rest/1000)).padStart(3,'0')+'.'+String(rest%1000).padStart(3,'0');};
+  const safe=(v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const download=(path)=>{if(!result||!path)return;const url=new URL(path,BASE);if(url.origin!==new URL(BASE).origin)return;window.open(url.href,'_blank','noopener,noreferrer');};
+  el('engSource').addEventListener('change',()=>{el('engSurface').disabled=el('engSource').value!=='dem';});
+  el('engSurface').disabled=true;
+  el('engDownloadDxf').addEventListener('click',()=>download(result?.downloads?.dxf));
+  el('engDownloadExcel').addEventListener('click',()=>download(result?.downloads?.excel));
+  el('engGenerate').addEventListener('click',async()=>{
+    const route=el('engRoute').files[0] || (['kmz','kml'].includes((el('file').files[0]?.name||'').split('.').pop().toLowerCase())?el('file').files[0]:null);
+    const source=el('engSource').value;
+    if(!route){status('Select a KMZ/KML/GeoJSON route first.','error');return;}
+    if(source==='dem'&&!el('engSurface').files[0]){status('Choose a georeferenced DEM raster for Uploaded DEM mode.','error');return;}
+    const interval=Number(el('engInterval').value),hscale=Number(el('engHscale').value),vscale=Number(el('engVscale').value);
+    if(!Number.isFinite(interval)||interval<1||interval>1000||!Number.isFinite(hscale)||hscale<100||hscale>20000||!Number.isFinite(vscale)||vscale<10||vscale>2000){status('Check interval (1–1000 m) and drawing scales (H 100–20000, V 10–2000).','error');return;}
+    const fd=new FormData();fd.append('route',route);
+    if(el('engCrossing').files[0])fd.append('crossing',el('engCrossing').files[0]);
+    if(source==='dem')fd.append('surface',el('engSurface').files[0]);
+    for(const [k,v] of Object.entries({source,epsg:el('engEpsg').value,interval,id_field:el('engIdField').value.trim()||'Crossing_ID',description_field:el('engDescField').value.trim()||'Description',hscale,vscale}))fd.append(k,String(v));
+    const btn=el('engGenerate');btn.disabled=true;result=null;el('engDownloads').classList.add('hidden');el('engResults').classList.add('hidden');
+    status('Processing route, crossing intersections and ground elevations. Free Render instances may need a minute to wake up…');
+    try{
+      const response=await fetch(BASE+'/profile/generate',{method:'POST',body:fd});
+      const payload=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error(typeof payload.detail==='string'?payload.detail:'HTTP '+response.status);
+      if(!Array.isArray(payload.samples))throw new Error('Unexpected response: missing samples.');
+      result=payload;
+      const samples=payload.samples, crossings=Array.isArray(payload.crossings)?payload.crossings:[];
+      const z=samples.map(p=>Number(p.elevation_m)).filter((v,i)=>samples[i].elevation_m!==null&&Number.isFinite(v));
+      el('engLength').textContent=(Number(payload.route_length_m)/1000).toFixed(3)+' km';
+      el('engSamples').textContent=samples.length;
+      el('engCrossingsCount').textContent=crossings.length;
+      el('engElevationRange').textContent=z.length?Math.min(...z).toFixed(1)+'–'+Math.max(...z).toFixed(1)+' m':'No elevations';
+      if(chart)chart.destroy();
+      const datasets=[{label:'Existing ground (DEM)',data:samples.filter(p=>p.elevation_m!==null).map(p=>({x:Number(p.chainage_m),y:Number(p.elevation_m)})),borderColor:'#15803d',backgroundColor:'#15803d',pointRadius:0,borderWidth:2,showLine:true,parsing:false}];
+      if(z.length){const zmin=Math.min(...z),zmax=Math.max(...z),pad=Math.max(3,(zmax-zmin)*.15);datasets.push({label:'Crossings',data:crossings.map(c=>({x:Number(c.chainage_m),y:zmax+pad})).filter(p=>Number.isFinite(p.x)),borderColor:'#dc2626',backgroundColor:'#dc2626',pointRadius:5,showLine:false,parsing:false});}
+      chart=new Chart(el('engChart').getContext('2d'),{type:'line',data:{datasets},options:{responsive:true,maintainAspectRatio:false,scales:{x:{type:'linear',title:{display:true,text:'Chainage (m)'}},y:{title:{display:true,text:'Ground elevation (m)'}}},plugins:{tooltip:{callbacks:{title:items=>items.length?'CH '+kp(items[0].parsed.x):''}}}}});
+      const headers='<tr><th>Chainage</th><th>Crossing ID</th><th>Description</th></tr>';
+      const rows=crossings.map(c=>'<tr><td>'+safe(c.kp||kp(c.chainage_m))+'</td><td>'+safe(c.crossing_id??c.id??'')+'</td><td>'+safe(c.description??'')+'</td></tr>').join('');
+      el('engCrossingList').innerHTML='<table class="gdb-table"><thead>'+headers+'</thead><tbody>'+(rows||'<tr><td colspan="3">No crossing intersections returned.</td></tr>')+'</tbody></table>';
+      el('engResults').classList.remove('hidden');el('engDownloads').classList.remove('hidden');
+      status('Engineering profile generated: '+samples.length+' ground samples and '+crossings.length+' crossing intersections. DXF and Excel are ready.','ok');
+    }catch(e){status('Engineering profile failed: '+e.message+'. If this is a network error, check the Render service and CORS setting.','error');}
+    finally{btn.disabled=false;}
+  });
+})();
+</script>
 </body>
 </html>
