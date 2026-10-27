@@ -1364,6 +1364,21 @@ qcUpdateControls();
       const payload=await response.json().catch(()=>({}));
       if(!response.ok)throw new Error(typeof payload.detail==='string'?payload.detail:'HTTP '+response.status);
       if(!Array.isArray(payload.samples))throw new Error('Unexpected response: missing samples.');
+      // Never silently accept an old backend that ignores engineering route direction.
+      const requestedDirection=el('engRouteDirection').value;
+      if(payload.route_direction!==requestedDirection){
+        throw new Error('Backend direction mismatch: requested '+requestedDirection+
+          ', but server returned '+String(payload.route_direction??'NO DIRECTION FIELD')+
+          '. Redeploy the updated main.py AND engine.py to pipeline-profile-engine on Render.');
+      }
+      // Sy-175 sanity check: RX-01 is near the designated engineering origin.
+      const rx01=(Array.isArray(payload.crossings)?payload.crossings:[])
+        .filter(c=>/\bRX[-_ ]?0?1\b/i.test(String(c.id??c.crossing_id??'')));
+      if(requestedDirection==='reverse' && rx01.length &&
+         Math.min(...rx01.map(c=>Number(c.chainage_m)))>Number(payload.route_length_m)/2){
+        throw new Error('RX-01 is still near the route END although the RX-01 start direction was selected. '+
+          'Backend stationing is inconsistent. Check the deployed engine.py and main.py; graph not generated to avoid misleading KP values.');
+      }
       result=payload;
       const samples=payload.samples, crossings=Array.isArray(payload.crossings)?payload.crossings:[];
       const z=samples.map(p=>Number(p.elevation_m)).filter((v,i)=>samples[i].elevation_m!==null&&Number.isFinite(v));
