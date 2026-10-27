@@ -331,7 +331,8 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
       <div class="tools" style="margin:0 0 12px"><button type="button" id="engApplyView" class="secondary">Apply chainage range</button><button type="button" id="engResetView" class="secondary">Full route</button></div>
       <div id="engViewStatus" class="small" aria-live="polite">Set a start and end chainage to zoom the profile without resampling.</div>
       <div class="profile-stats"><div class="profile-stat"><b id="engLength">—</b><span>Route length</span></div><div class="profile-stat"><b id="engSamples">—</b><span>Samples</span></div><div class="profile-stat"><b id="engCrossingsCount">—</b><span>Crossings</span></div><div class="profile-stat"><b id="engElevationRange">—</b><span>Ground RL range</span></div></div>
-      <div id="engChartViewport" style="width:100%;overflow-x:auto;border:1px solid #e2e8f0;border-radius:8px"><div id="engChartInner" style="height:625px;min-width:100%"><canvas id="engChart"></canvas></div></div>
+      <div id="engChartViewport" style="width:100%;overflow-x:auto;border:1px solid #e2e8f0;border-radius:8px"><div id="engChartInner" style="height:490px;min-width:100%"><canvas id="engChart"></canvas></div></div>
+      <div id="engCrossingLegend" style="display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:center;margin:12px 0 8px;font:12px Segoe UI,Arial,sans-serif;color:#475569"><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:20px;height:4px;background:#15803d;border-radius:3px"></i>Existing ground (DEM)</span><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:12px;background:#ea7800;border-radius:3px"></i>Road / Plant</span><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:12px;background:#1463ed;border-radius:3px"></i>Cable / Telecom</span><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:12px;background:#8434d9;border-radius:3px"></i>Fence / Trench</span><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:12px;background:#e02d43;border-radius:3px"></i>Other</span><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:12px;background:#64748b;border-radius:3px"></i>N/A</span></div>
       <div id="engCrossingList" class="gdb-table-wrap"></div>
     </div>
     <p class="small">Crossing chainages are calculated in the selected projected CRS. DEM-derived ground levels are indicative and not verified survey RLs. The current backend does not calculate pipe design elevations or full company-specific engineering bands.</p>
@@ -1339,7 +1340,7 @@ qcUpdateControls();
     chart.update();
     const count=(result.crossings||[]).filter(c=>Number(c.chainage_m)>=start&&Number(c.chainage_m)<=end).length;
     const viewport=el('engChartViewport');
-    const required=Math.max(viewport.clientWidth,count*72+100);
+    const required=Math.max(viewport.clientWidth,count*53+100);
     el('engChartInner').style.width=Math.ceil(required)+'px';
     chart.resize();chart.update();
     el('engViewStatus').textContent='Displaying CH '+kp(start)+' to '+kp(end)+' ('+count+' crossings). All crossing markers remain at their exact KPs; original exports unchanged.';
@@ -1387,9 +1388,9 @@ qcUpdateControls();
       el('engCrossingsCount').textContent=crossings.length;
       el('engElevationRange').textContent=z.length?Math.min(...z).toFixed(1)+'–'+Math.max(...z).toFixed(1)+' m':'No elevations';
       if(chart)chart.destroy();
-      const datasets=[{label:'Existing ground (DEM)',data:samples.filter(p=>p.elevation_m!==null).map(p=>({x:Number(p.chainage_m),y:Number(p.elevation_m)})),borderColor:'#15803d',backgroundColor:'#15803d',pointRadius:0,borderWidth:2,showLine:true,parsing:false}];
-      // Technical drawing style: color-coded vertical framed tags in a compact
-      // annotation strip. Crossings always stay anchored to their true chainage.
+      const datasets=[{label:'Existing ground (DEM)',data:samples.filter(p=>p.elevation_m!==null).map(p=>({x:Number(p.chainage_m),y:Number(p.elevation_m)})),borderColor:'#15803d',backgroundColor:'rgba(22,163,74,0.15)',fill:{target:'origin'},pointRadius:0,borderWidth:2.5,showLine:true,parsing:false}];
+      // Compact, framed vertical crossing tags anchored close to the ground.
+      // Exact KP markers are never shifted; only annotation boxes are staggered.
       const crossingAnnotationPlugin={
         id:'engineeringCrossingAnnotations',
         afterDatasetsDraw(ch){
@@ -1398,9 +1399,7 @@ qcUpdateControls();
             .filter(c=>Number.isFinite(c.ch)&&c.ch>=xaxis.min&&c.ch<=xaxis.max)
             .sort((a,b)=>a.ch-b.ch||a._index-b._index);
           if(!visible.length)return;
-          const slot=area.width/visible.length;
-          const tagW=46,tagH=145;
-          const trim=(value,max)=>{const v=String(value??'').trim();return v.length>max?v.slice(0,max-1)+'…':v;};
+          const tagW=34,tagH=127;
           const colorFor=c=>{
             const d=String(c.description??'').toLowerCase();
             return /road|track|highway|plant/.test(d)?'#ea7800':
@@ -1408,43 +1407,47 @@ qcUpdateControls();
               /trench|fence/.test(d)?'#8434d9':
               /n\/?a|unknown/.test(d)?'#64748b':'#e02d43';
           };
-          // Interpolate ground elevation at the true intersection, not label position.
-          const groundAt=ch=>{
+          const groundAt=station=>{
             for(let j=1;j<samples.length;j++){
               const a=samples[j-1],b=samples[j],ax=Number(a.chainage_m),bx=Number(b.chainage_m);
-              if(ch>=ax&&ch<=bx&&a.elevation_m!=null&&b.elevation_m!=null)
-                return Number(a.elevation_m)+(Number(b.elevation_m)-Number(a.elevation_m))*(ch-ax)/(bx-ax||1);
+              if(station>=ax&&station<=bx&&a.elevation_m!=null&&b.elevation_m!=null)
+                return Number(a.elevation_m)+(Number(b.elevation_m)-Number(a.elevation_m))*(station-ax)/(bx-ax||1);
             }
             return null;
           };
+          // Equal-width annotation lanes prevent overlapping frames, even when
+          // several intersections share the same chainage.
+          const laneW=49, span=visible.length*laneW;
+          const left=area.left+Math.max(0,(area.width-span)/2);
           ctx.save();
           visible.forEach((c,i)=>{
             const trueX=xaxis.getPixelForValue(c.ch);
-            const labelX=area.left+slot*(i+.5);
+            const labelX=left+(i+.5)*laneW;
             const ground=groundAt(c.ch);
             const groundY=ground===null?area.bottom:yaxis.getPixelForValue(ground);
             const color=colorFor(c);
-            // Alternate two rows in the upper annotation strip. The tag-to-plot
-            // leader is short; the true crossing marker is a thin dashed vertical.
-            const row=i%2;
-            const tagBottom=area.top-18-row*31;
+            // Tags follow the local ground rather than the top of the chart.
+            // Vertical connection at ground is deliberately only 10 pixels.
+            const row=i%3;
+            const tagBottom=Math.max(area.top+tagH+8,groundY-17-row*13);
             const tagTop=tagBottom-tagH;
             const tagLeft=labelX-tagW/2;
-            ctx.strokeStyle=color;ctx.lineWidth=1;ctx.globalAlpha=.66;
-            ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(trueX,groundY);ctx.lineTo(trueX,area.top);ctx.stroke();
-            ctx.setLineDash([]);ctx.globalAlpha=.9;
-            ctx.beginPath();ctx.moveTo(trueX,area.top);ctx.lineTo(trueX,area.top-8);
-            ctx.lineTo(labelX,tagBottom+2);ctx.stroke();ctx.globalAlpha=1;
-            ctx.fillStyle=color;ctx.beginPath();ctx.arc(trueX,groundY,3.2,0,Math.PI*2);ctx.fill();
-            ctx.fillStyle='#ffffff';ctx.strokeStyle=color;ctx.lineWidth=1.3;
-            ctx.beginPath();ctx.roundRect(tagLeft,tagTop,tagW,tagH,7);ctx.fill();ctx.stroke();
-            ctx.fillStyle=color;ctx.beginPath();ctx.roundRect(tagLeft,tagBottom-5,tagW,5,[0,0,7,7]);ctx.fill();
-            ctx.save();ctx.translate(labelX,tagBottom-12);ctx.rotate(-Math.PI/2);
+            ctx.strokeStyle=color;ctx.lineWidth=1.05;ctx.globalAlpha=.82;
+            ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(trueX,groundY-2);ctx.lineTo(trueX,groundY-12);ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.beginPath();ctx.moveTo(trueX,groundY-12);ctx.lineTo(labelX,tagBottom+1);ctx.stroke();
+            ctx.globalAlpha=1;
+            ctx.fillStyle=color;ctx.beginPath();ctx.arc(trueX,groundY,3,0,Math.PI*2);ctx.fill();
+            ctx.fillStyle='#ffffff';ctx.strokeStyle=color;ctx.lineWidth=1.25;
+            ctx.beginPath();ctx.roundRect(tagLeft,tagTop,tagW,tagH,6);ctx.fill();ctx.stroke();
+            ctx.fillStyle=color;ctx.beginPath();ctx.roundRect(tagLeft,tagBottom-4,tagW,4,[0,0,6,6]);ctx.fill();
+            ctx.save();ctx.translate(labelX,tagBottom-9);ctx.rotate(-Math.PI/2);
             ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle=color;
-            ctx.font='600 10px Segoe UI, Arial, sans-serif';
-            const id=trim(c.crossing_id??c.id??'CROSSING',14);
-            const desc=trim(c.description??'',18);
-            ctx.fillText('CH '+kp(c.ch)+' | '+id+' | '+desc,0,0,tagH-19);
+            ctx.font='bold 10.5px Segoe UI, Arial, sans-serif';
+            const id=String(c.crossing_id??c.id??'CROSSING').trim();
+            const desc=String(c.description??'').trim();
+            const label='CH '+kp(c.ch)+' | '+id+' | '+desc;
+            ctx.fillText(label,0,0,tagH-15);
             ctx.restore();
           });
           ctx.restore();
@@ -1459,9 +1462,9 @@ qcUpdateControls();
         const end=Number(el('engViewEnd').value)||Number(result.route_length_m);
         const count=(result.crossings||[]).filter(c=>Number(c.chainage_m)>=start&&Number(c.chainage_m)<=end).length;
         const viewport=el('engChartViewport');
-        const required=Math.max(viewport.clientWidth, count*72+100);
+        const required=Math.max(viewport.clientWidth, count*53+100);
         el('engChartInner').style.width=Math.ceil(required)+'px';
-        el('engChartInner').style.height='625px';
+        el('engChartInner').style.height='490px';
         if(chart)chart.resize();
         return count;
       };
@@ -1469,7 +1472,7 @@ qcUpdateControls();
         type:'line',data:{datasets},plugins:[crossingAnnotationPlugin],
         options:{responsive:true,maintainAspectRatio:false,
           // Reserve a dedicated top area for the crossing annotations.
-          layout:{padding:{top:226,right:16,left:8,bottom:4}},
+          layout:{padding:{top:154,right:16,left:8,bottom:4}},
           interaction:{mode:'nearest',intersect:false},
           scales:{
             x:{type:'linear',min:0,max:Math.ceil(Number(payload.route_length_m)/100)*100,
@@ -1485,7 +1488,7 @@ qcUpdateControls();
       el('engViewStart').value='0';
       el('engViewEnd').value=String(Math.ceil(Number(payload.route_length_m)));
       resizeEngineeringChart();
-      el('engViewStatus').textContent='Showing full route. Vertical color-coded labels are staggered above the plot, with exact crossing station markers; scroll for closely spaced crossings.';
+      el('engViewStatus').textContent='Showing full route. Compact vertical crossing labels are color-coded and staggered near the ground; exact KP markers are unchanged.';
       const headers='<tr><th>Chainage</th><th>Crossing ID</th><th>Description</th></tr>';
       const rows=crossings.map(c=>'<tr><td>'+safe(c.kp||kp(c.chainage_m))+'</td><td>'+safe(c.crossing_id??c.id??'')+'</td><td>'+safe(c.description??'')+'</td></tr>').join('');
       el('engCrossingList').innerHTML='<table class="gdb-table"><thead>'+headers+'</thead><tbody>'+(rows||'<tr><td colspan="3">No crossing intersections returned.</td></tr>')+'</tbody></table>';
