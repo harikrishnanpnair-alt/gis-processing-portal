@@ -126,6 +126,13 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
 @media(max-width:650px){#engPlanMap{height:340px}.eng-plan-bar{align-items:flex-start}}
 
 </style>
+<style>
+#engChartViewport,#engStripViewport{overflow-x:hidden!important;overflow-y:hidden!important}
+#engChartInner{width:100%!important;min-width:0!important}
+#engStripSvg{max-width:100%;width:100%!important}
+.eng-export-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0}
+.eng-export-actions button{font-size:13px}
+</style>
 </head>
 
 <body>
@@ -362,9 +369,10 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
       <div id="engStripPanel" style="margin:12px 0;border:1px solid #d7dfeb;border-radius:10px;padding:12px;background:#fff">
         <div style="font-weight:700;margin-bottom:6px">Pipeline Strip Map — Centerline & Chainage</div>
         <div class="small" style="margin-bottom:8px">Schematic chainage strip; crossings and KP positions follow the engineering profile. Satellite planimetry is displayed above.</div>
-        <div id="engStripViewport" style="overflow-x:auto;width:100%"><svg id="engStripSvg" role="img" aria-label="Pipeline chainage strip map" style="display:block;height:145px;min-width:100%"></svg></div>
+        <div id="engStripViewport" style="overflow-x:hidden;width:100%"><svg id="engStripSvg" role="img" aria-label="Pipeline chainage strip map" style="display:block;height:145px;min-width:100%"></svg></div>
       </div>
-      <div id="engChartViewport" style="width:100%;overflow-x:auto;border:1px solid #e2e8f0;border-radius:8px"><div id="engChartInner" style="height:550px;min-width:100%"><canvas id="engChart"></canvas></div></div>
+      <div id="engChartViewport" style="width:100%;overflow-x:hidden;border:1px solid #e2e8f0;border-radius:8px"><div id="engChartInner" style="height:550px;min-width:100%"><canvas id="engChart"></canvas></div></div>
+      <div class="eng-export-actions"><strong>Export views:</strong><button type="button" id="engExportPlan" class="secondary">Satellite plan PNG</button><button type="button" id="engExportStrip" class="secondary">Strip map PNG</button><button type="button" id="engExportProfile" class="secondary">Profile PNG</button><button type="button" id="engExportAll" class="green">All 3 PNG (ZIP)</button><button type="button" id="engExportPdf" class="secondary">All 3 PDF</button><span class="small" id="engExportStatus" role="status"></span></div>
       <div id="engCrossingLegend" style="display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:center;margin:12px 0 8px;font:12px Segoe UI,Arial,sans-serif;color:#475569"><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:20px;height:4px;background:#15803d;border-radius:3px"></i>Existing ground (DEM)</span><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:12px;background:#ea7800;border-radius:3px"></i>Road / Plant</span><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:12px;background:#1463ed;border-radius:3px"></i>Cable / Telecom</span><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:12px;background:#8434d9;border-radius:3px"></i>Fence / Trench</span><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:12px;background:#e02d43;border-radius:3px"></i>Other</span><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:12px;background:#64748b;border-radius:3px"></i>N/A</span></div>
       <div id="engCrossingList" class="gdb-table-wrap"></div>
     </div>
@@ -396,6 +404,8 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 
@@ -1464,8 +1474,8 @@ qcUpdateControls();
     if(end<=start)return;
     const crossings=(result.crossings||[]).filter(c=>Number(c.chainage_m)>=start&&Number(c.chainage_m)<=end);
     const viewport=el('engStripViewport'),svg=el('engStripSvg');
-    const width=Math.max(viewport.clientWidth,crossings.length*104+180,650),height=145;
-    svg.setAttribute('viewBox',`0 0 ${width} ${height}`);svg.setAttribute('width',width);
+    const width=Math.max(viewport.clientWidth,350),height=145;
+    svg.setAttribute('viewBox',`0 0 ${width} ${height}`);svg.setAttribute('width','100%');
     const left=60,right=width-40,y=95,at=ch=>left+(ch-start)/(end-start)*(right-left);
     const esc=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     let parts=[`<rect x="0" y="0" width="${width}" height="${height}" fill="white"/>`,
@@ -1497,7 +1507,7 @@ qcUpdateControls();
     chart.update();
     const count=(result.crossings||[]).filter(c=>Number(c.chainage_m)>=start&&Number(c.chainage_m)<=end).length;
     const viewport=el('engChartViewport');
-    const required=Math.max(viewport.clientWidth,count*104+180);
+    const required=viewport.clientWidth;
     el('engChartInner').style.width=Math.ceil(required)+'px';
     chart.resize();chart.update();
     renderEngineeringPlan();
@@ -1567,40 +1577,63 @@ qcUpdateControls();
             }
             return null;
           };
-          const spacing=96;
-          const ideal=visible.map(c=>xaxis.getPixelForValue(c.ch));
-          const positions=ideal.map(x=>x);
-          // Move only the labels, not the station dots.
-          for(let i=1;i<positions.length;i++)positions[i]=Math.max(positions[i],positions[i-1]+spacing);
-          const excess=positions[positions.length-1]-(area.right-32);
-          if(excess>0)positions.forEach((_,i)=>positions[i]-=excess);
-          if(positions[0]<area.left+20){const dx=area.left+20-positions[0];positions.forEach((_,i)=>positions[i]+=dx);}
+          // Layout labels based on the selected visible range, not the full route.
+          // Text is rotated, so the horizontal footprint depends on wrapped rows.
           ctx.save();
+          ctx.font='bold 12px Segoe UI, Arial, sans-serif';
+          const labels=visible.map(c=>{
+            const id=String(c.crossing_id??c.id??'CROSSING').trim();
+            const desc=String(c.description??'').trim()||'N/A';
+            const words=desc.split(/\s+/),lines=[];let line='';
+            for(const word of words){const trial=line?line+' '+word:word;
+              if(ctx.measureText(trial).width>150&&line){lines.push(line);line=word;}else line=trial;
+            }
+            if(line)lines.push(line);
+            return {id,lines,halfWidth:Math.max(15, (lines.length*14+23)/2)};
+          });
+          const ideal=visible.map(c=>xaxis.getPixelForValue(c.ch));
+          const gap=7;
+          // Each crossing gets its own narrow lane. Adjacent labels are packed
+          // with the minimum readable gap; leaders always end at the text centre.
+          const positions=ideal.slice();
+          for(let i=1;i<positions.length;i++){
+            const minDist=labels[i-1].halfWidth+labels[i].halfWidth+gap;
+            positions[i]=Math.max(ideal[i],positions[i-1]+minDist);
+          }
+          // Translate the entire group into the visible chart, preserving spacing.
+          const minX=area.left+labels[0].halfWidth+3;
+          const maxX=area.right-labels[labels.length-1].halfWidth-3;
+          if(positions[positions.length-1]>maxX){
+            const shift=positions[positions.length-1]-maxX;
+            for(let i=0;i<positions.length;i++)positions[i]-=shift;
+          }
+          if(positions[0]<minX){
+            const shift=minX-positions[0];
+            for(let i=0;i<positions.length;i++)positions[i]+=shift;
+          }
+          // When crowded, use the already scrollable chart rather than overlap.
+          const labelBaseline=area.top-13;
           visible.forEach((c,i)=>{
             const trueX=ideal[i],labelX=positions[i],ground=groundAt(c.ch);
             const groundY=ground===null?area.bottom:yaxis.getPixelForValue(ground);
-            const color=colorFor(c),id=String(c.crossing_id??c.id??'CROSSING').trim();
-            const desc=String(c.description??'').trim()||'N/A';
-            const top=area.top-18;
-            ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.setLineDash([3,3]);
-            ctx.beginPath();ctx.moveTo(trueX,groundY-3);ctx.lineTo(trueX,groundY-14);ctx.stroke();
+            const color=colorFor(c),label=labels[i];
+            const leaderY=groundY-14;
+            ctx.strokeStyle=color;ctx.lineWidth=1.3;ctx.setLineDash([3,3]);
+            ctx.beginPath();ctx.moveTo(trueX,groundY-3);ctx.lineTo(trueX,leaderY);ctx.stroke();
             ctx.setLineDash([]);
-            // Horizontal offset stays above the terrain line.
-            if(Math.abs(labelX-trueX)>2){ctx.beginPath();ctx.moveTo(trueX,groundY-14);ctx.lineTo(labelX,groundY-14);ctx.stroke();}
+            // Connect to the exact centre of the rotated text, via an elbow.
+            const textAnchorY=labelBaseline+155;
+            ctx.beginPath();ctx.moveTo(trueX,leaderY);
+            ctx.lineTo(labelX,leaderY);
+            ctx.lineTo(labelX,textAnchorY+3);
+            ctx.stroke();
             ctx.fillStyle=color;ctx.beginPath();ctx.arc(trueX,groundY,3.5,0,Math.PI*2);ctx.fill();
-            // Rotate text upward, with line wrapping for complete descriptions.
-            ctx.save();ctx.translate(labelX,top+158);ctx.rotate(-Math.PI/2);
+            ctx.save();ctx.translate(labelX,textAnchorY);ctx.rotate(-Math.PI/2);
             ctx.fillStyle=color;ctx.textAlign='left';ctx.textBaseline='middle';
             ctx.font='bold 12px Segoe UI, Arial, sans-serif';
-            const prefix='CH '+kp(c.ch)+' | '+id;
-            ctx.fillText(prefix,0,-12);
-            // Preserve complete description by splitting into lines, never ellipsis.
-            const words=desc.split(/\s+/),lines=[];let line='';
-            for(const word of words){const trial=line?line+' '+word:word;
-              if(ctx.measureText(trial).width>145&&line){lines.push(line);line=word;}else line=trial;
-            }
-            if(line)lines.push(line);
-            lines.forEach((part,j)=>ctx.fillText(part,0,5+j*14));
+            const rows=['CH '+kp(c.ch)+' | '+label.id,...label.lines];
+            const offset=(rows.length-1)*7;
+            rows.forEach((part,j)=>ctx.fillText(part,0,j*14-offset));
             ctx.restore();
           });
           ctx.restore();
@@ -1615,7 +1648,7 @@ qcUpdateControls();
         const end=Number(el('engViewEnd').value)||Number(result.route_length_m);
         const count=(result.crossings||[]).filter(c=>Number(c.chainage_m)>=start&&Number(c.chainage_m)<=end).length;
         const viewport=el('engChartViewport');
-        const required=Math.max(viewport.clientWidth, count*104+180);
+        const required=Math.max(viewport.clientWidth, count*68+180);
         el('engChartInner').style.width=Math.ceil(required)+'px';
         el('engChartInner').style.height='550px';
         if(chart)chart.resize();
@@ -1651,6 +1684,66 @@ qcUpdateControls();
     }catch(e){status('Engineering profile failed: '+e.message+'. If this is a network error, check the Render service and CORS setting.','error');}
     finally{btn.disabled=false;}
   });
+})();
+</script>
+
+<script>
+/* Engineering view exports: current visible chainage range; no horizontal scrolling. */
+(function(){
+  const $=id=>document.getElementById(id);
+  const notice=msg=>{if($('engExportStatus'))$('engExportStatus').textContent=msg};
+  const fileName=kind=>`Sy175_${kind}_CH${$('engViewStart').value||0}-${$('engViewEnd').value||'full'}`;
+  function download(blob,name){const a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000)}
+  function asBlob(canvas){return new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Canvas export failed')),'image/png'))}
+  async function getImage(which){
+    if(!$('engResults')||$('engResults').classList.contains('hidden'))throw Error('Generate the engineering profile first.');
+    if(which==='profile'){
+      const canvas=$('engChart');if(!canvas.width)throw Error('Profile chart is empty');
+      const copy=document.createElement('canvas');copy.width=canvas.width*2;copy.height=canvas.height*2;
+      const ctx=copy.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,copy.width,copy.height);ctx.drawImage(canvas,0,0,copy.width,copy.height);
+      return asBlob(copy);
+    }
+    if(which==='strip'){
+      const svg=$('engStripSvg');const rect=svg.getBoundingClientRect();
+      const cloned=svg.cloneNode(true);cloned.setAttribute('xmlns','http://www.w3.org/2000/svg');cloned.setAttribute('width',Math.max(350,Math.round(rect.width)));cloned.setAttribute('height',145);
+      const xml=new XMLSerializer().serializeToString(cloned);
+      const url=URL.createObjectURL(new Blob([xml],{type:'image/svg+xml;charset=utf-8'}));
+      try{const img=new Image();await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=reject;img.src=url});
+        const canvas=document.createElement('canvas');canvas.width=Math.round(Math.max(350,rect.width)*2);canvas.height=290;
+        const ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0,canvas.width,canvas.height);return await asBlob(canvas)
+      }finally{URL.revokeObjectURL(url)}
+    }
+    if(which==='plan'){
+      if(typeof html2canvas==='undefined')throw Error('Map export library could not load. Check internet access.');
+      const map=$('engPlanMap');if(!map)throw Error('Plan map unavailable');
+      const canvas=await html2canvas(map,{backgroundColor:'#ffffff',useCORS:true,allowTaint:false,scale:2,logging:false});
+      return asBlob(canvas);
+    }
+    throw Error('Unknown view');
+  }
+  async function run(task){try{notice('Preparing export…');await task();notice('Export prepared.')}catch(e){notice('Export failed: '+e.message+' (Satellite tiles may restrict cross-origin capture.)')}}
+  for(const [id,kind] of [['engExportPlan','plan'],['engExportStrip','strip'],['engExportProfile','profile']]){
+    $(id)?.addEventListener('click',()=>run(async()=>download(await getImage(kind),fileName(kind)+'.png')));
+  }
+  $('engExportAll')?.addEventListener('click',()=>run(async()=>{
+    if(typeof JSZip==='undefined')throw Error('ZIP library not loaded');
+    const zip=new JSZip();for(const kind of ['plan','strip','profile'])zip.file(fileName(kind)+'.png',await getImage(kind));
+    download(await zip.generateAsync({type:'blob'}),fileName('all_three')+'.zip');
+  }));
+  $('engExportPdf')?.addEventListener('click',()=>run(async()=>{
+    if(!window.jspdf?.jsPDF)throw Error('PDF library not loaded');
+    const pdf=new window.jspdf.jsPDF({orientation:'landscape',unit:'mm',format:'a3'});
+    let first=true;
+    for(const kind of ['plan','strip','profile']){
+      const blob=await getImage(kind);const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(blob)});
+      const img=new Image();await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=reject;img.src=data});
+      if(!first)pdf.addPage('a3','landscape');first=false;
+      pdf.setFont('helvetica','bold');pdf.setFontSize(16);pdf.text(`Sy-175 | ${kind.toUpperCase()} | CH ${$('engViewStart').value} - ${$('engViewEnd').value} m`,12,13);
+      const maxW=395,maxH=270,scale=Math.min(maxW/img.width,maxH/img.height);
+      pdf.addImage(data,'PNG',12+(maxW-img.width*scale)/2,20,img.width*scale,img.height*scale);
+    }
+    pdf.save(fileName('all_three')+'.pdf');
+  }));
 })();
 </script>
 </body>
