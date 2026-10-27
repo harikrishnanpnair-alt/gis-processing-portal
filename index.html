@@ -330,7 +330,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
       <div class="tools" style="margin:0 0 12px"><button type="button" id="engApplyView" class="secondary">Apply chainage range</button><button type="button" id="engResetView" class="secondary">Full route</button></div>
       <div id="engViewStatus" class="small" aria-live="polite">Set a start and end chainage to zoom the profile without resampling.</div>
       <div class="profile-stats"><div class="profile-stat"><b id="engLength">—</b><span>Route length</span></div><div class="profile-stat"><b id="engSamples">—</b><span>Samples</span></div><div class="profile-stat"><b id="engCrossingsCount">—</b><span>Crossings</span></div><div class="profile-stat"><b id="engElevationRange">—</b><span>Ground RL range</span></div></div>
-      <div class="profile-chart-wrap" style="height:560px"><canvas id="engChart"></canvas></div>
+      <div class="profile-chart-wrap" style="height:650px"><canvas id="engChart"></canvas></div>
       <div id="engCrossingList" class="gdb-table-wrap"></div>
     </div>
     <p class="small">Crossing chainages are calculated in the selected projected CRS. DEM-derived ground levels are indicative and not verified survey RLs. The current backend does not calculate pipe design elevations or full company-specific engineering bands.</p>
@@ -1381,10 +1381,56 @@ qcUpdateControls();
           if(!visible.length)return;
           ctx.save();
           ctx.font='600 11px Segoe UI, Arial, sans-serif';
-          const placed=[];
-          const top=area.top-12,bottom=area.bottom;
-          for(const c of visible){
-            const x=xaxis.getPixelForValue(c.ch);
+          // Labels occupy the upper part of the SAME chart area as the ground profile.
+          // Place all visible labels globally, so close crossings cannot overlap.
+          const labels=visible.map(c=>{
+            const id=String(c.crossing_id??c.id??'').trim();
+            const desc=String(c.description??'').trim();
+            const label='CH '+kp(c.ch)+(id?' | '+id:'')+(desc?' | '+desc:'');
+            return {c,x:xaxis.getPixelForValue(c.ch),label,width:ctx.measureText(label).width};
+          });
+          const labelEnd=yaxis.getPixelForValue(Math.ceil((Math.max(...samples.filter(p=>p.elevation_m!=null).map(p=>Number(p.elevation_m)))+4)/5)*5);
+          const occupied=[];
+          // Prioritize densely grouped labels, then search symmetrically for free columns.
+          const ordered=[...labels].sort((a,b)=>{
+            const neighbors=o=>labels.filter(t=>t!==o&&Math.abs(t.x-o.x)<35).length;
+            return neighbors(b)-neighbors(a)||a.x-b.x;
+          });
+          for(const item of ordered){
+            let choice=null;
+            const labelHeight=12;
+            for(let step=0;step<100&&!choice;step++){
+              for(const direction of (step===0?[0]:[-1,1])){
+                const px=item.x+direction*step*15;
+                if(px<area.left+7||px>area.right-7)continue;
+                const rect={left:px-labelHeight/2,right:px+labelHeight/2,
+                  top:labelEnd-item.width-5,bottom:labelEnd+4};
+                if(rect.top<area.top+3)continue;
+                const collision=occupied.some(r=>rect.left<r.right+3&&rect.right>r.left-3&&
+                  rect.top<r.bottom+3&&rect.bottom>r.top-3);
+                if(!collision){choice={px,rect};break;}
+              }
+            }
+            // Extremely dense crossing groups: use a separate shorter vertical tier.
+            if(!choice){
+              for(let tier=1;tier<=4&&!choice;tier++){
+                const end=labelEnd+tier*25;
+                for(let step=0;step<100&&!choice;step++){
+                  for(const dir of (step===0?[0]:[-1,1])){
+                    const px=item.x+dir*step*15;
+                    if(px<area.left+7||px>area.right-7)continue;
+                    const rect={left:px-6,right:px+6,top:end-item.width-5,bottom:end+4};
+                    if(rect.top<area.top+3||rect.bottom>area.bottom-12)continue;
+                    if(!occupied.some(r=>rect.left<r.right+3&&rect.right>r.left-3&&rect.top<r.bottom+3&&rect.bottom>r.top-3)){
+                      choice={px,rect};break;
+                    }
+                  }
+                }
+              }
+            }
+            if(!choice)continue; // Never print unreadable overlapping text.
+            occupied.push(choice.rect);
+            const {c,x,label}=item,px=choice.px,anchorY=choice.rect.bottom-4;
             let ground=null;
             for(let j=1;j<samples.length;j++){
               const a=samples[j-1],b=samples[j],ax=Number(a.chainage_m),bx=Number(b.chainage_m);
@@ -1392,55 +1438,38 @@ qcUpdateControls();
                 ground=Number(a.elevation_m)+(Number(b.elevation_m)-Number(a.elevation_m))*(c.ch-ax)/(bx-ax||1);break;
               }
             }
-            const groundY=ground===null?bottom:yaxis.getPixelForValue(ground);
-            const id=String(c.crossing_id??c.id??'').trim();
-            const desc=String(c.description??'').trim();
-            const label='CH '+kp(c.ch)+(id?' | '+id:'')+(desc?' | '+desc:'');
-            const textLength=ctx.measureText(label).width;
-            // Find a collision-free label column; keep crossing lines at exact chainages.
-            let labelX=x, labelTop=top, found=false;
-            for(let ring=0;ring<50&&!found;ring++){
-              const offsets=ring===0?[0]:[ring*14,-ring*14];
-              for(const offset of offsets){
-                const candidate=x+offset;
-                if(candidate<area.left+8||candidate>area.right-8)continue;
-                const collides=placed.some(p=>Math.abs(p.x-candidate)<13 &&
-                  Math.min(p.top,labelTop)-Math.max(p.top-p.length,labelTop-textLength)<-3);
-                if(!collides){labelX=candidate;found=true;break;}
-              }
-            }
-            if(!found){
-              // Very dense crossings: offset annotation vertically as a fallback.
-              labelX=Math.max(area.left+8,Math.min(area.right-8,x));
-              labelTop=top-((placed.length%5)*14);
-            }
-            placed.push({x:labelX,top:labelTop,length:textLength});
+            const groundY=ground===null?area.bottom:yaxis.getPixelForValue(ground);
             ctx.strokeStyle='#dc2626';ctx.fillStyle='#b91c1c';ctx.lineWidth=1.15;
-            ctx.beginPath();ctx.moveTo(x,Math.max(area.top,Math.min(bottom,groundY)));
-            ctx.lineTo(x,area.top);ctx.stroke();
-            ctx.beginPath();ctx.arc(x,Math.max(area.top,Math.min(bottom,groundY)),2.4,0,Math.PI*2);ctx.fill();
-            // Elbow leader connects displaced label to the true crossing chainage.
-            ctx.beginPath();ctx.moveTo(x,area.top);ctx.lineTo(x,area.top-5);
-            ctx.lineTo(labelX,area.top-5);ctx.lineTo(labelX,labelTop);ctx.stroke();
-            ctx.save();ctx.translate(labelX,labelTop);ctx.rotate(-Math.PI/2);
+            ctx.beginPath();ctx.moveTo(x,Math.max(area.top,Math.min(area.bottom,groundY)));
+            ctx.lineTo(x,anchorY+10);ctx.lineTo(px,anchorY+10);ctx.lineTo(px,anchorY);ctx.stroke();
+            ctx.beginPath();ctx.arc(x,Math.max(area.top,Math.min(area.bottom,groundY)),2.4,0,Math.PI*2);ctx.fill();
+            ctx.save();ctx.translate(px,anchorY);ctx.rotate(-Math.PI/2);
             ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(label,0,0);ctx.restore();
           }
           ctx.restore();
         }
       };
       const groundMin=z.length?Math.min(...z):0,groundMax=z.length?Math.max(...z):10;
-      const range=Math.max(5,groundMax-groundMin);
+      // Round the RL axis to 5 m and extend its TOP through the crossing label area.
+      // Unlike the previous blank padding, the Y grid now spans the whole plot.
+      const axisMin=5*Math.floor((groundMin-2)/5);
+      const labelWidths=crossings.map(c=>('CH '+kp(Number(c.chainage_m))+' | '+String(c.crossing_id??c.id??'')+' | '+String(c.description??'')).length*6.5);
+      const labelBand=Math.min(340,Math.max(210,...labelWidths)+22);
+      const plotHeight=490;
+      const topExtra=(groundMax-axisMin)*labelBand/Math.max(100,plotHeight-labelBand);
+      const axisMax=5*Math.ceil((groundMax+Math.max(10,topExtra))/5);
       chart=new Chart(el('engChart').getContext('2d'),{
         type:'line',data:{datasets},plugins:[crossingAnnotationPlugin],
         options:{responsive:true,maintainAspectRatio:false,
           // Reserve a dedicated top area for the crossing annotations.
-          layout:{padding:{top:245,right:16,left:8,bottom:4}},
+          layout:{padding:{top:12,right:16,left:8,bottom:4}},
           interaction:{mode:'nearest',intersect:false},
           scales:{
             x:{type:'linear',min:0,max:Math.ceil(Number(payload.route_length_m)/100)*100,
               title:{display:true,text:'Pipeline Chainage (m)'},
               ticks:{callback:v=>kp(v),maxTicksLimit:9},grid:{color:'#e2e8f0'}},
-            y:{min:Math.floor(groundMin-range*.12),max:Math.ceil(groundMax+range*.12),
+            y:{min:axisMin,max:axisMax,
+              ticks:{stepSize:5},
               title:{display:true,text:'Existing Ground RL (m)'},grid:{color:'#e2e8f0'}}},
           plugins:{legend:{display:true,position:'top'},
             tooltip:{callbacks:{title:items=>items.length?'CH '+kp(items[0].parsed.x):''}}}
