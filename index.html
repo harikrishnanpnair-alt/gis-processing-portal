@@ -323,6 +323,12 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
       </div>
     </div>
     <div id="engResults" class="hidden" style="margin-top:20px">
+      <div class="gdb-input-grid" style="margin:0 0 12px">
+        <div><label for="engViewStart">Graph start chainage (m)</label><input id="engViewStart" type="number" min="0" step="1" value="0"></div>
+        <div><label for="engViewEnd">Graph end chainage (m)</label><input id="engViewEnd" type="number" min="0" step="1" placeholder="Full route"></div>
+      </div>
+      <div class="tools" style="margin:0 0 12px"><button type="button" id="engApplyView" class="secondary">Apply chainage range</button><button type="button" id="engResetView" class="secondary">Full route</button></div>
+      <div id="engViewStatus" class="small" aria-live="polite">Set a start and end chainage to zoom the profile without resampling.</div>
       <div class="profile-stats"><div class="profile-stat"><b id="engLength">—</b><span>Route length</span></div><div class="profile-stat"><b id="engSamples">—</b><span>Samples</span></div><div class="profile-stat"><b id="engCrossingsCount">—</b><span>Crossings</span></div><div class="profile-stat"><b id="engElevationRange">—</b><span>Ground RL range</span></div></div>
       <div class="profile-chart-wrap" style="height:560px"><canvas id="engChart"></canvas></div>
       <div id="engCrossingList" class="gdb-table-wrap"></div>
@@ -1319,6 +1325,22 @@ qcUpdateControls();
   el('engSurface').disabled=true;
   el('engDownloadDxf').addEventListener('click',()=>download(result?.downloads?.dxf));
   el('engDownloadExcel').addEventListener('click',()=>download(result?.downloads?.excel));
+  const applyView=(reset=false)=>{
+    if(!chart||!result){el('engViewStatus').textContent='Generate the engineering profile first.';return;}
+    const length=Number(result.route_length_m);
+    if(reset){el('engViewStart').value='0';el('engViewEnd').value=String(Math.ceil(length));}
+    const start=Number(el('engViewStart').value),end=Number(el('engViewEnd').value);
+    if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start||end>Math.ceil(length)+0.001){
+      el('engViewStatus').textContent='Invalid range. Use 0 ≤ start < end ≤ '+Math.ceil(length)+' m.';return;
+    }
+    chart.options.scales.x.min=start;
+    chart.options.scales.x.max=end;
+    chart.update();
+    const count=(result.crossings||[]).filter(c=>Number(c.chainage_m)>=start&&Number(c.chainage_m)<=end).length;
+    el('engViewStatus').textContent='Displaying CH '+kp(start)+' to '+kp(end)+' ('+count+' crossings). Original data and exports unchanged.';
+  };
+  el('engApplyView').addEventListener('click',()=>applyView(false));
+  el('engResetView').addEventListener('click',()=>applyView(true));
   el('engGenerate').addEventListener('click',async()=>{
     const route=el('engRoute').files[0] || (['kmz','kml'].includes((el('file').files[0]?.name||'').split('.').pop().toLowerCase())?el('file').files[0]:null);
     const source=el('engSource').value;
@@ -1353,15 +1375,16 @@ qcUpdateControls();
         afterDatasetsDraw(ch){
           if(!crossings.length)return;
           const ctx=ch.ctx,area=ch.chartArea,xaxis=ch.scales.x,yaxis=ch.scales.y;
-          const usable=crossings.map(c=>({...c,ch:Number(c.chainage_m)})).filter(c=>Number.isFinite(c.ch)).sort((a,b)=>a.ch-b.ch);
+          const visible=crossings.map(c=>({...c,ch:Number(c.chainage_m)}))
+            .filter(c=>Number.isFinite(c.ch)&&c.ch>=xaxis.min&&c.ch<=xaxis.max)
+            .sort((a,b)=>a.ch-b.ch);
+          if(!visible.length)return;
           ctx.save();
-          const top=area.top+8,bottom=area.bottom;
-          ctx.lineWidth=1.25;ctx.strokeStyle='#dc2626';ctx.fillStyle='#991b1b';
           ctx.font='600 11px Segoe UI, Arial, sans-serif';
-          for(let i=0;i<usable.length;i++){
-            const c=usable[i],x=xaxis.getPixelForValue(c.ch);
-            if(x<area.left||x>area.right)continue;
-            // Find ground RL at the crossing by linear interpolation between adjacent DEM samples.
+          const placed=[];
+          const top=area.top-12,bottom=area.bottom;
+          for(const c of visible){
+            const x=xaxis.getPixelForValue(c.ch);
             let ground=null;
             for(let j=1;j<samples.length;j++){
               const a=samples[j-1],b=samples[j],ax=Number(a.chainage_m),bx=Number(b.chainage_m);
@@ -1370,19 +1393,37 @@ qcUpdateControls();
               }
             }
             const groundY=ground===null?bottom:yaxis.getPixelForValue(ground);
-            // Draw crossing vertical line from ground surface up to the annotation band.
-            ctx.beginPath();ctx.moveTo(x,top+2);ctx.lineTo(x,Math.min(bottom,Math.max(top+3,groundY)));ctx.stroke();
-            ctx.beginPath();ctx.arc(x,Math.min(bottom,Math.max(top+3,groundY)),2.5,0,Math.PI*2);ctx.fill();
             const id=String(c.crossing_id??c.id??'').trim();
             const desc=String(c.description??'').trim();
             const label='CH '+kp(c.ch)+(id?' | '+id:'')+(desc?' | '+desc:'');
-            // Rotate -90 degrees to produce a vertical engineering annotation.
-            // Stagger adjacent labels slightly to reduce collision at clustered crossings.
-            const stagger=(i%3)*13;
-            ctx.save();ctx.translate(x-5,top+stagger);ctx.rotate(-Math.PI/2);
-            ctx.textAlign='right';ctx.textBaseline='middle';
-            ctx.fillStyle='#991b1b';ctx.fillText(label,0,0);
-            ctx.restore();
+            const textLength=ctx.measureText(label).width;
+            // Find a collision-free label column; keep crossing lines at exact chainages.
+            let labelX=x, labelTop=top, found=false;
+            for(let ring=0;ring<50&&!found;ring++){
+              const offsets=ring===0?[0]:[ring*14,-ring*14];
+              for(const offset of offsets){
+                const candidate=x+offset;
+                if(candidate<area.left+8||candidate>area.right-8)continue;
+                const collides=placed.some(p=>Math.abs(p.x-candidate)<13 &&
+                  Math.min(p.top,labelTop)-Math.max(p.top-p.length,labelTop-textLength)<-3);
+                if(!collides){labelX=candidate;found=true;break;}
+              }
+            }
+            if(!found){
+              // Very dense crossings: offset annotation vertically as a fallback.
+              labelX=Math.max(area.left+8,Math.min(area.right-8,x));
+              labelTop=top-((placed.length%5)*14);
+            }
+            placed.push({x:labelX,top:labelTop,length:textLength});
+            ctx.strokeStyle='#dc2626';ctx.fillStyle='#b91c1c';ctx.lineWidth=1.15;
+            ctx.beginPath();ctx.moveTo(x,Math.max(area.top,Math.min(bottom,groundY)));
+            ctx.lineTo(x,area.top);ctx.stroke();
+            ctx.beginPath();ctx.arc(x,Math.max(area.top,Math.min(bottom,groundY)),2.4,0,Math.PI*2);ctx.fill();
+            // Elbow leader connects displaced label to the true crossing chainage.
+            ctx.beginPath();ctx.moveTo(x,area.top);ctx.lineTo(x,area.top-5);
+            ctx.lineTo(labelX,area.top-5);ctx.lineTo(labelX,labelTop);ctx.stroke();
+            ctx.save();ctx.translate(labelX,labelTop);ctx.rotate(-Math.PI/2);
+            ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(label,0,0);ctx.restore();
           }
           ctx.restore();
         }
@@ -1393,7 +1434,7 @@ qcUpdateControls();
         type:'line',data:{datasets},plugins:[crossingAnnotationPlugin],
         options:{responsive:true,maintainAspectRatio:false,
           // Reserve a dedicated top area for the crossing annotations.
-          layout:{padding:{top:155,right:16,left:8,bottom:4}},
+          layout:{padding:{top:245,right:16,left:8,bottom:4}},
           interaction:{mode:'nearest',intersect:false},
           scales:{
             x:{type:'linear',min:0,max:Math.ceil(Number(payload.route_length_m)/100)*100,
@@ -1405,6 +1446,9 @@ qcUpdateControls();
             tooltip:{callbacks:{title:items=>items.length?'CH '+kp(items[0].parsed.x):''}}}
         }
       });
+      el('engViewStart').value='0';
+      el('engViewEnd').value=String(Math.ceil(Number(payload.route_length_m)));
+      el('engViewStatus').textContent='Showing full route. Adjust start/end and click Apply chainage range.';
       const headers='<tr><th>Chainage</th><th>Crossing ID</th><th>Description</th></tr>';
       const rows=crossings.map(c=>'<tr><td>'+safe(c.kp||kp(c.chainage_m))+'</td><td>'+safe(c.crossing_id??c.id??'')+'</td><td>'+safe(c.description??'')+'</td></tr>').join('');
       el('engCrossingList').innerHTML='<table class="gdb-table"><thead>'+headers+'</thead><tbody>'+(rows||'<tr><td colspan="3">No crossing intersections returned.</td></tr>')+'</tbody></table>';
