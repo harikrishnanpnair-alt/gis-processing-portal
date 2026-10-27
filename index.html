@@ -311,9 +311,10 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
         <div class="gdb-input-grid">
           <div><label for="engSource">Elevation source</label><select id="engSource"><option value="srtm">Online SRTM</option><option value="aster">ASTER (requires configured server provider)</option><option value="dem">Uploaded DEM</option></select></div>
           <div><label for="engEpsg">Profile working CRS</label><select id="engEpsg"><option value="32640">WGS84 UTM 40N (32640)</option><option value="32639">WGS84 UTM 39N (32639)</option><option value="27040">Nahrwan 1967 UTM 40N (27040)</option><option value="27039">Nahrwan 1967 UTM 39N (27039)</option></select></div>
+          <div><label for="engRouteDirection">Engineering route start</label><select id="engRouteDirection"><option value="reverse">Sy-175: RX-01 end is CH 0+000</option><option value="forward">KMZ first vertex is CH 0+000</option></select></div>
           <div><label for="engInterval">Sample interval (m)</label><input id="engInterval" type="number" min="1" max="1000" value="25"></div>
-          <div><label for="engIdField">Crossing ID attribute</label><input id="engIdField" type="text" value="Crossing_ID"></div>
-          <div><label for="engDescField">Crossing description attribute</label><input id="engDescField" type="text" value="Description"></div>
+          <div><label for="engIdField">Crossing ID attribute</label><input id="engIdField" type="text" value="CrossingNa"></div>
+          <div><label for="engDescField">Crossing description attribute</label><input id="engDescField" type="text" value="CrossingTy"></div>
           <div><label for="engHscale">Horizontal scale 1:</label><input id="engHscale" type="number" value="2500" min="100"></div>
           <div><label for="engVscale">Vertical scale 1:</label><input id="engVscale" type="number" value="100" min="10"></div>
         </div>
@@ -330,7 +331,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
       <div class="tools" style="margin:0 0 12px"><button type="button" id="engApplyView" class="secondary">Apply chainage range</button><button type="button" id="engResetView" class="secondary">Full route</button></div>
       <div id="engViewStatus" class="small" aria-live="polite">Set a start and end chainage to zoom the profile without resampling.</div>
       <div class="profile-stats"><div class="profile-stat"><b id="engLength">—</b><span>Route length</span></div><div class="profile-stat"><b id="engSamples">—</b><span>Samples</span></div><div class="profile-stat"><b id="engCrossingsCount">—</b><span>Crossings</span></div><div class="profile-stat"><b id="engElevationRange">—</b><span>Ground RL range</span></div></div>
-      <div class="profile-chart-wrap" style="height:650px"><canvas id="engChart"></canvas></div>
+      <div id="engChartViewport" style="width:100%;overflow-x:auto;border:1px solid #e2e8f0;border-radius:8px"><div id="engChartInner" style="height:700px;min-width:100%"><canvas id="engChart"></canvas></div></div>
       <div id="engCrossingList" class="gdb-table-wrap"></div>
     </div>
     <p class="small">Crossing chainages are calculated in the selected projected CRS. DEM-derived ground levels are indicative and not verified survey RLs. The current backend does not calculate pipe design elevations or full company-specific engineering bands.</p>
@@ -1337,6 +1338,10 @@ qcUpdateControls();
     chart.options.scales.x.max=end;
     chart.update();
     const count=(result.crossings||[]).filter(c=>Number(c.chainage_m)>=start&&Number(c.chainage_m)<=end).length;
+    const viewport=el('engChartViewport');
+    const required=Math.max(viewport.clientWidth,count*21+130);
+    el('engChartInner').style.width=Math.ceil(required)+'px';
+    chart.resize();chart.update();
     el('engViewStatus').textContent='Displaying CH '+kp(start)+' to '+kp(end)+' ('+count+' crossings). Original data and exports unchanged.';
   };
   el('engApplyView').addEventListener('click',()=>applyView(false));
@@ -1351,7 +1356,7 @@ qcUpdateControls();
     const fd=new FormData();fd.append('route',route);
     if(el('engCrossing').files[0])fd.append('crossing',el('engCrossing').files[0]);
     if(source==='dem')fd.append('surface',el('engSurface').files[0]);
-    for(const [k,v] of Object.entries({source,epsg:el('engEpsg').value,interval,id_field:el('engIdField').value.trim()||'Crossing_ID',description_field:el('engDescField').value.trim()||'Description',hscale,vscale}))fd.append(k,String(v));
+    for(const [k,v] of Object.entries({source,epsg:el('engEpsg').value,interval,id_field:el('engIdField').value.trim()||'CrossingNa',description_field:el('engDescField').value.trim()||'CrossingTy',route_direction:el('engRouteDirection').value,hscale,vscale}))fd.append(k,String(v));
     const btn=el('engGenerate');btn.disabled=true;result=null;el('engDownloads').classList.add('hidden');el('engResults').classList.add('hidden');
     status('Processing route, crossing intersections and ground elevations. Free Render instances may need a minute to wake up…');
     try{
@@ -1370,74 +1375,26 @@ qcUpdateControls();
       const datasets=[{label:'Existing ground (DEM)',data:samples.filter(p=>p.elevation_m!==null).map(p=>({x:Number(p.chainage_m),y:Number(p.elevation_m)})),borderColor:'#15803d',backgroundColor:'#15803d',pointRadius:0,borderWidth:2,showLine:true,parsing:false}];
       // Crossing annotations are drawn directly on the chart canvas, not as artificial RL points.
       // Exact crossing chainages are preserved; the terrain series is not resampled.
+      // Draw every crossing label in its own column above the RL plotting area.
+      // The chart becomes horizontally scrollable when crossings are crowded.
       const crossingAnnotationPlugin={
         id:'engineeringCrossingAnnotations',
-        afterDatasetsDraw(ch){
-          if(!crossings.length)return;
+        afterDraw(ch){
           const ctx=ch.ctx,area=ch.chartArea,xaxis=ch.scales.x,yaxis=ch.scales.y;
-          const visible=crossings.map(c=>({...c,ch:Number(c.chainage_m)}))
+          const visible=crossings.map((c,i)=>({...c,ch:Number(c.chainage_m),_index:i}))
             .filter(c=>Number.isFinite(c.ch)&&c.ch>=xaxis.min&&c.ch<=xaxis.max)
-            .sort((a,b)=>a.ch-b.ch);
+            .sort((a,b)=>a.ch-b.ch||a._index-b._index);
           if(!visible.length)return;
-          ctx.save();
-          ctx.font='600 11px Segoe UI, Arial, sans-serif';
-          // Labels occupy the upper part of the SAME chart area as the ground profile.
-          // Place all visible labels globally, so close crossings cannot overlap.
-          const labels=visible.map(c=>{
+          const top=area.top-14;
+          const left=area.left+10,right=area.right-10;
+          const gap=(right-left)/Math.max(1,visible.length);
+          ctx.save();ctx.font='600 11px Segoe UI, Arial, sans-serif';
+          visible.forEach((c,i)=>{
+            const trueX=xaxis.getPixelForValue(c.ch);
+            const labelX=left+gap*(i+.5);
             const id=String(c.crossing_id??c.id??'').trim();
             const desc=String(c.description??'').trim();
             const label='CH '+kp(c.ch)+(id?' | '+id:'')+(desc?' | '+desc:'');
-            return {c,x:xaxis.getPixelForValue(c.ch),label,width:ctx.measureText(label).width};
-          });
-          const labelEnd=yaxis.getPixelForValue(Math.ceil((Math.max(...samples.filter(p=>p.elevation_m!=null).map(p=>Number(p.elevation_m)))+4)/5)*5);
-          const occupied=[];
-          // Search BOTH horizontal and vertical offsets. Keep labels close to their
-          // actual crossing first, and stagger their vertical end points by tiers.
-          // Rectangles cover the entire rotated text, not just the anchor point.
-          const ordered=[...labels].sort((a,b)=>{
-            const neighbors=o=>labels.filter(t=>t!==o&&Math.abs(t.x-o.x)<35).length;
-            return neighbors(b)-neighbors(a)||a.x-b.x;
-          });
-          for(const item of ordered){
-            let choice=null;
-            const labelWidth=13;
-            const horizontalOffsets=[0,-15,15,-30,30,-45,45,-60,60,-75,75,-90,90];
-            const maxTier=10;
-            // Try a short horizontal offset at each vertical tier before
-            // searching further away, avoiding tangled long leader lines.
-            for(let tier=0;tier<=maxTier&&!choice;tier++){
-              const anchor=labelEnd+tier*22;
-              for(const dx of horizontalOffsets){
-                const px=item.x+dx;
-                if(px<area.left+8||px>area.right-8)continue;
-                const rect={left:px-labelWidth/2,right:px+labelWidth/2,
-                  top:anchor-item.width-6,bottom:anchor+6};
-                if(rect.top<area.top+8||rect.bottom>area.bottom-12)continue;
-                const collision=occupied.some(r=>rect.left<r.right+5&&rect.right>r.left-5&&
-                  rect.top<r.bottom+5&&rect.bottom>r.top-5);
-                if(!collision){choice={px,rect};break;}
-              }
-            }
-            // If the first tier set is exhausted, permit larger sideways offsets.
-            for(let step=7;step<Math.ceil((area.right-area.left)/15)&&!choice;step++){
-              for(let tier=0;tier<=maxTier&&!choice;tier++){
-                const anchor=labelEnd+tier*22;
-                for(const dir of [-1,1]){
-                  const px=item.x+dir*step*15;
-                  if(px<area.left+8||px>area.right-8)continue;
-                  const rect={left:px-labelWidth/2,right:px+labelWidth/2,
-                    top:anchor-item.width-6,bottom:anchor+6};
-                  if(rect.top<area.top+8||rect.bottom>area.bottom-12)continue;
-                  if(!occupied.some(r=>rect.left<r.right+5&&rect.right>r.left-5&&
-                    rect.top<r.bottom+5&&rect.bottom>r.top-5)){
-                    choice={px,rect};break;
-                  }
-                }
-              }
-            }
-            if(!choice)continue; // Never render overlapping text.
-            occupied.push(choice.rect);
-            const {c,x,label}=item,px=choice.px,anchorY=choice.rect.bottom-4;
             let ground=null;
             for(let j=1;j<samples.length;j++){
               const a=samples[j-1],b=samples[j],ax=Number(a.chainage_m),bx=Number(b.chainage_m);
@@ -1446,30 +1403,36 @@ qcUpdateControls();
               }
             }
             const groundY=ground===null?area.bottom:yaxis.getPixelForValue(ground);
-            ctx.strokeStyle='#dc2626';ctx.fillStyle='#b91c1c';ctx.lineWidth=1.15;
-            ctx.beginPath();ctx.moveTo(x,Math.max(area.top,Math.min(area.bottom,groundY)));
-            ctx.lineTo(x,anchorY+10);ctx.lineTo(px,anchorY+10);ctx.lineTo(px,anchorY);ctx.stroke();
-            ctx.beginPath();ctx.arc(x,Math.max(area.top,Math.min(area.bottom,groundY)),2.4,0,Math.PI*2);ctx.fill();
-            ctx.save();ctx.translate(px,anchorY);ctx.rotate(-Math.PI/2);
+            ctx.strokeStyle='#dc2626';ctx.fillStyle='#b91c1c';ctx.lineWidth=1;
+            ctx.beginPath();ctx.moveTo(trueX,groundY);ctx.lineTo(trueX,area.top);
+            ctx.lineTo(labelX,top);ctx.stroke();
+            ctx.beginPath();ctx.arc(trueX,groundY,2.4,0,Math.PI*2);ctx.fill();
+            ctx.save();ctx.translate(labelX,top-4);ctx.rotate(-Math.PI/2);
             ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(label,0,0);ctx.restore();
-          }
+          });
           ctx.restore();
         }
       };
       const groundMin=z.length?Math.min(...z):0,groundMax=z.length?Math.max(...z):10;
-      // Round the RL axis to 5 m and extend its TOP through the crossing label area.
-      // Unlike the previous blank padding, the Y grid now spans the whole plot.
       const axisMin=5*Math.floor((groundMin-2)/5);
-      const labelWidths=crossings.map(c=>('CH '+kp(Number(c.chainage_m))+' | '+String(c.crossing_id??c.id??'')+' | '+String(c.description??'')).length*6.5);
-      const labelBand=Math.min(340,Math.max(210,...labelWidths)+22);
-      const plotHeight=490;
-      const topExtra=(groundMax-axisMin)*labelBand/Math.max(100,plotHeight-labelBand);
-      const axisMax=5*Math.ceil((groundMax+Math.max(10,topExtra))/5);
+      const axisMax=5*Math.ceil((groundMax+2)/5);
+      const resizeEngineeringChart=()=>{
+        if(!result)return;
+        const start=Number(el('engViewStart').value)||0;
+        const end=Number(el('engViewEnd').value)||Number(result.route_length_m);
+        const count=(result.crossings||[]).filter(c=>Number(c.chainage_m)>=start&&Number(c.chainage_m)<=end).length;
+        const viewport=el('engChartViewport');
+        const required=Math.max(viewport.clientWidth, count*21+130);
+        el('engChartInner').style.width=Math.ceil(required)+'px';
+        el('engChartInner').style.height='700px';
+        if(chart)chart.resize();
+        return count;
+      };
       chart=new Chart(el('engChart').getContext('2d'),{
         type:'line',data:{datasets},plugins:[crossingAnnotationPlugin],
         options:{responsive:true,maintainAspectRatio:false,
           // Reserve a dedicated top area for the crossing annotations.
-          layout:{padding:{top:12,right:16,left:8,bottom:4}},
+          layout:{padding:{top:315,right:16,left:8,bottom:4}},
           interaction:{mode:'nearest',intersect:false},
           scales:{
             x:{type:'linear',min:0,max:Math.ceil(Number(payload.route_length_m)/100)*100,
@@ -1484,6 +1447,7 @@ qcUpdateControls();
       });
       el('engViewStart').value='0';
       el('engViewEnd').value=String(Math.ceil(Number(payload.route_length_m)));
+      resizeEngineeringChart();
       el('engViewStatus').textContent='Showing full route. Adjust start/end and click Apply chainage range.';
       const headers='<tr><th>Chainage</th><th>Crossing ID</th><th>Description</th></tr>';
       const rows=crossings.map(c=>'<tr><td>'+safe(c.kp||kp(c.chainage_m))+'</td><td>'+safe(c.crossing_id??c.id??'')+'</td><td>'+safe(c.description??'')+'</td></tr>').join('');
