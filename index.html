@@ -1391,44 +1391,51 @@ qcUpdateControls();
           });
           const labelEnd=yaxis.getPixelForValue(Math.ceil((Math.max(...samples.filter(p=>p.elevation_m!=null).map(p=>Number(p.elevation_m)))+4)/5)*5);
           const occupied=[];
-          // Prioritize densely grouped labels, then search symmetrically for free columns.
+          // Search BOTH horizontal and vertical offsets. Keep labels close to their
+          // actual crossing first, and stagger their vertical end points by tiers.
+          // Rectangles cover the entire rotated text, not just the anchor point.
           const ordered=[...labels].sort((a,b)=>{
             const neighbors=o=>labels.filter(t=>t!==o&&Math.abs(t.x-o.x)<35).length;
             return neighbors(b)-neighbors(a)||a.x-b.x;
           });
           for(const item of ordered){
             let choice=null;
-            const labelHeight=12;
-            for(let step=0;step<100&&!choice;step++){
-              for(const direction of (step===0?[0]:[-1,1])){
-                const px=item.x+direction*step*15;
-                if(px<area.left+7||px>area.right-7)continue;
-                const rect={left:px-labelHeight/2,right:px+labelHeight/2,
-                  top:labelEnd-item.width-5,bottom:labelEnd+4};
-                if(rect.top<area.top+3)continue;
-                const collision=occupied.some(r=>rect.left<r.right+3&&rect.right>r.left-3&&
-                  rect.top<r.bottom+3&&rect.bottom>r.top-3);
+            const labelWidth=13;
+            const horizontalOffsets=[0,-15,15,-30,30,-45,45,-60,60,-75,75,-90,90];
+            const maxTier=10;
+            // Try a short horizontal offset at each vertical tier before
+            // searching further away, avoiding tangled long leader lines.
+            for(let tier=0;tier<=maxTier&&!choice;tier++){
+              const anchor=labelEnd+tier*22;
+              for(const dx of horizontalOffsets){
+                const px=item.x+dx;
+                if(px<area.left+8||px>area.right-8)continue;
+                const rect={left:px-labelWidth/2,right:px+labelWidth/2,
+                  top:anchor-item.width-6,bottom:anchor+6};
+                if(rect.top<area.top+8||rect.bottom>area.bottom-12)continue;
+                const collision=occupied.some(r=>rect.left<r.right+5&&rect.right>r.left-5&&
+                  rect.top<r.bottom+5&&rect.bottom>r.top-5);
                 if(!collision){choice={px,rect};break;}
               }
             }
-            // Extremely dense crossing groups: use a separate shorter vertical tier.
-            if(!choice){
-              for(let tier=1;tier<=4&&!choice;tier++){
-                const end=labelEnd+tier*25;
-                for(let step=0;step<100&&!choice;step++){
-                  for(const dir of (step===0?[0]:[-1,1])){
-                    const px=item.x+dir*step*15;
-                    if(px<area.left+7||px>area.right-7)continue;
-                    const rect={left:px-6,right:px+6,top:end-item.width-5,bottom:end+4};
-                    if(rect.top<area.top+3||rect.bottom>area.bottom-12)continue;
-                    if(!occupied.some(r=>rect.left<r.right+3&&rect.right>r.left-3&&rect.top<r.bottom+3&&rect.bottom>r.top-3)){
-                      choice={px,rect};break;
-                    }
+            // If the first tier set is exhausted, permit larger sideways offsets.
+            for(let step=7;step<Math.ceil((area.right-area.left)/15)&&!choice;step++){
+              for(let tier=0;tier<=maxTier&&!choice;tier++){
+                const anchor=labelEnd+tier*22;
+                for(const dir of [-1,1]){
+                  const px=item.x+dir*step*15;
+                  if(px<area.left+8||px>area.right-8)continue;
+                  const rect={left:px-labelWidth/2,right:px+labelWidth/2,
+                    top:anchor-item.width-6,bottom:anchor+6};
+                  if(rect.top<area.top+8||rect.bottom>area.bottom-12)continue;
+                  if(!occupied.some(r=>rect.left<r.right+5&&rect.right>r.left-5&&
+                    rect.top<r.bottom+5&&rect.bottom>r.top-5)){
+                    choice={px,rect};break;
                   }
                 }
               }
             }
-            if(!choice)continue; // Never print unreadable overlapping text.
+            if(!choice)continue; // Never render overlapping text.
             occupied.push(choice.rect);
             const {c,x,label}=item,px=choice.px,anchorY=choice.rect.bottom-4;
             let ground=null;
