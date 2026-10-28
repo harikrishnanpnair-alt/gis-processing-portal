@@ -109,7 +109,16 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
 .eng-plan-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;padding:11px 14px;background:#f1f6ff;border-bottom:1px solid #d7dfeb}
 .eng-plan-bar strong{color:#164a82;font-size:15px}
 .eng-plan-bar .small{margin:0}
-#engPlanMap{height:450px;width:100%;background:#e4eaf0}
+#engPlanMap{height:560px;width:100%;background:#e4eaf0}
+.eng-map-wrap{position:relative}
+.eng-north-arrow{position:absolute;top:10px;right:14px;z-index:900;display:flex;align-items:center;flex-direction:column;pointer-events:none;filter:drop-shadow(0 1px 2px #fff)}
+.eng-north-arrow span{font-weight:900;color:#142d50;background:#fff;border-radius:3px;padding:0 5px}
+.eng-bearing-label{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:700;color:#1e3a5f}
+.eng-bearing-label input{width:110px;accent-color:#175fa9}
+#engPlanPanel.eng-plan-expanded{position:fixed;inset:8px;z-index:10000;margin:0;display:flex;flex-direction:column;box-shadow:0 10px 45px #0006}
+#engPlanPanel.eng-plan-expanded .eng-map-wrap{flex:1;min-height:0}
+#engPlanPanel.eng-plan-expanded #engPlanMap{height:100%}
+#engPlanPanel.eng-plan-expanded .eng-plan-footer{flex-shrink:0}
 .eng-plan-footer{display:flex;gap:12px;flex-wrap:wrap;align-items:center;padding:9px 14px;font-size:12px;color:#475569}
 .eng-plan-key{display:inline-flex;align-items:center;gap:6px}
 .eng-plan-key i{display:inline-block;width:15px;height:5px;border-radius:2px}
@@ -362,8 +371,8 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
       <div id="engViewStatus" class="small" aria-live="polite">Set a start and end chainage to zoom the profile without resampling.</div>
       <div class="profile-stats"><div class="profile-stat"><b id="engLength">—</b><span>Route length</span></div><div class="profile-stat"><b id="engSamples">—</b><span>Samples</span></div><div class="profile-stat"><b id="engCrossingsCount">—</b><span>Crossings</span></div><div class="profile-stat"><b id="engElevationRange">—</b><span>Ground RL range</span></div></div>
       <div id="engPlanPanel">
-        <div class="eng-plan-bar"><div><strong>Pipeline Planimetry — Satellite View</strong><div class="small">Actual route coordinates · same chainage direction as ground profile</div></div><div class="tools"><button type="button" id="engPlanFit" class="secondary">Fit selected chainage</button><button type="button" id="engPlanGrid" class="secondary" aria-pressed="true">UTM grid: On</button></div></div>
-        <div id="engPlanMap" aria-label="Engineering pipeline planimetry satellite map"></div>
+        <div class="eng-plan-bar"><div><strong>Pipeline Planimetry — Satellite View</strong><div class="small">Actual route coordinates · same chainage direction as ground profile</div></div><div class="tools"><button type="button" id="engPlanFit" class="secondary">Fit selected chainage</button><button type="button" id="engPlanGrid" class="secondary" aria-pressed="true">UTM grid: On</button><button type="button" id="engPlanAlign" class="secondary">Align pipeline</button><label class="eng-bearing-label">Rotation <input id="engPlanBearing" type="range" min="-180" max="180" step="1" value="0" aria-label="Rotate plan map"><output id="engPlanBearingValue">0°</output></label><button type="button" id="engPlanReset" class="secondary">North up</button><button type="button" id="engPlanExpand" class="secondary">Maximize map</button><button type="button" id="engPlanGoogle" class="secondary">Google Earth ↗</button></div></div>
+        <div class="eng-map-wrap"><div id="engPlanMap" aria-label="Engineering pipeline planimetry satellite map"></div><div class="eng-north-arrow" id="engNorthArrow" title="True north"><span> N </span><svg viewBox="0 0 36 52" width="36" height="52" aria-hidden="true"><path d="M18 2 L32 47 L18 36 L4 47 Z" fill="#fff" stroke="#172554" stroke-width="2"/><path d="M18 2 L18 36 L4 47 Z" fill="#172554"/></svg></div></div>
         <div class="eng-plan-footer"><span class="eng-plan-key"><i style="background:#dc2626"></i>Pipeline centerline</span><span class="eng-plan-key"><i style="background:#e97808"></i>Road</span><span class="eng-plan-key"><i style="background:#1769ef"></i>Cable</span><span class="eng-plan-key"><i style="background:#8b38da"></i>Fence / Trench</span><span class="eng-plan-key"><i style="background:#64748b"></i>Unknown</span><span id="engPlanStatus">Generate profile to load planimetry.</span></div>
       </div>
       <div id="engStripPanel" style="margin:12px 0;border:1px solid #d7dfeb;border-radius:10px;padding:12px;background:#fff">
@@ -404,6 +413,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -1372,7 +1382,8 @@ qcUpdateControls();
   el('engDownloadExcel').addEventListener('click',()=>download(result?.downloads?.excel));
   // The API returns easting/northing for the DEM samples. Convert those
   // projected coordinates to WGS84 for Leaflet; do not change route stationing.
-  let planMap=null,planGroup=null,planGrid=null,planExtent=null;
+  let planMap=null,planGroup=null,planGrid=null,planExtent=null,planRouteLL=null;
+  const setPlanBearing=(degrees)=>{const b=Math.max(-180,Math.min(180,Number(degrees)||0));if(planMap&&typeof planMap.setBearing==='function'){planMap.setBearing(b);el('engPlanBearing').value=String(Math.round(b));el('engPlanBearingValue').textContent=Math.round(b)+'°';el('engNorthArrow').style.transform='rotate('+(-b)+'deg)';}else{el('engPlanBearingValue').textContent='Rotation plugin unavailable';}};
   if(typeof proj4==='function'){
     proj4.defs('EPSG:32639','+proj=utm +zone=39 +datum=WGS84 +units=m +no_defs');
     proj4.defs('EPSG:32640','+proj=utm +zone=40 +datum=WGS84 +units=m +no_defs');
@@ -1382,13 +1393,33 @@ qcUpdateControls();
   const planColors=c=>{const d=String(c.description??'').toLowerCase();return /road|track|highway|plant/.test(d)?'#e97808':/cable|electrical|fiber|telecom/.test(d)?'#1769ef':/trench|fence/.test(d)?'#8b38da':/n\/?a|unknown/.test(d)?'#64748b':'#df3046';};
   const ensurePlanMap=()=>{
     if(planMap)return;
-    planMap=L.map('engPlanMap',{preferCanvas:true,zoomControl:true});
+    planMap=L.map('engPlanMap',{preferCanvas:true,zoomControl:true,rotate:true,bearing:0});
     const sat=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Imagery © Esri, Maxar and contributors'}).addTo(planMap);
     const street=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'});
     L.control.layers({'Satellite (Esri)':sat,'Street Map':street},null,{collapsed:true}).addTo(planMap);
-    L.control.scale({imperial:false,metric:true}).addTo(planMap);
+    L.control.scale({imperial:false,metric:true,position:'bottomleft'}).addTo(planMap);
     planGroup=L.layerGroup().addTo(planMap);planGrid=L.layerGroup().addTo(planMap);
     planMap.setView([24.45,54.38],8);
+    el('engPlanBearing').addEventListener('input',e=>setPlanBearing(e.target.value));
+    el('engPlanReset').addEventListener('click',()=>setPlanBearing(0));
+    el('engPlanAlign').addEventListener('click',()=>{
+      if(!planRouteLL||planRouteLL.length<2)return;
+      const a=planMap.project(planRouteLL[0],planMap.getZoom()),b=planMap.project(planRouteLL[planRouteLL.length-1],planMap.getZoom());
+      const angle=Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI;
+      // Rotate projected end-to-end route to the horizontal screen axis.
+      setPlanBearing(-angle);
+    });
+    el('engPlanExpand').addEventListener('click',()=>{
+      const expanded=el('engPlanPanel').classList.toggle('eng-plan-expanded');
+      el('engPlanExpand').textContent=expanded?'Exit full screen':'Maximize map';
+      document.body.style.overflow=expanded?'hidden':'';
+      setTimeout(()=>{planMap.invalidateSize();if(planExtent&&planExtent.isValid())planMap.fitBounds(planExtent.pad(.15),{maxZoom:19});},80);
+    });
+    el('engPlanGoogle').addEventListener('click',()=>{
+      if(!planRouteLL||!planRouteLL.length){alert('Generate the route first.');return;}
+      const mid=planRouteLL[Math.floor(planRouteLL.length/2)];
+      window.open('https://earth.google.com/web/@'+mid[0]+','+mid[1]+',1000a,2500d,35y,0h,0t,0r','_blank','noopener,noreferrer');
+    });
     el('engPlanFit').addEventListener('click',()=>{if(planExtent&&planExtent.isValid())planMap.fitBounds(planExtent.pad(.20),{maxZoom:18});});
     el('engPlanGrid').addEventListener('click',()=>{
       const on=planMap.hasLayer(planGrid);if(on)planMap.removeLayer(planGrid);else planGrid.addTo(planMap);
@@ -1419,6 +1450,7 @@ qcUpdateControls();
     const toLL=p=>{const q=proj4(epsg,'EPSG:4326',[p.x,p.y]);return [q[1],q[0]];};
     const selected=[at(start),...points.filter(p=>p.ch>start&&p.ch<end),at(end)];
     const ll=selected.map(toLL);
+    planRouteLL=ll;
     if(ll.some(p=>!p.every(Number.isFinite))){el('engPlanStatus').textContent='Invalid coordinate transformation. Check working CRS.';return;}
     L.polyline(ll,{color:'#fff',weight:8,opacity:.95}).addTo(planGroup);
     L.polyline(ll,{color:'#c21f34',weight:4,opacity:1}).addTo(planGroup);
@@ -1455,8 +1487,8 @@ qcUpdateControls();
       L.polyline([a,b],{color:'#5ca2d0',weight:.7,opacity:.52,interactive:false}).addTo(planGrid);
     }
     planExtent=L.latLngBounds(ll);
-    planMap.invalidateSize();planMap.fitBounds(planExtent.pad(.28),{maxZoom:18});
-    el('engPlanStatus').textContent='CH '+kp(start)+'–'+kp(end)+' · '+cr.length+' crossings · '+epsg+' · Esri satellite';
+    planMap.invalidateSize();planMap.fitBounds(planExtent.pad(.15),{maxZoom:19});
+    el('engPlanStatus').textContent='CH '+kp(start)+'–'+kp(end)+' · '+cr.length+' crossings · '+epsg+' · Esri satellite · rotate/align available · Google Earth opens separately';
   };
 
   const renderEngineeringStrip=()=>{
