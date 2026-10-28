@@ -111,8 +111,17 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
 .eng-plan-bar .small{margin:0}
 #engPlanMap{height:560px;width:100%;background:#e4eaf0}
 .eng-map-wrap{position:relative}
-.eng-north-arrow{position:absolute;top:10px;right:14px;z-index:900;display:flex;align-items:center;flex-direction:column;pointer-events:none;filter:drop-shadow(0 1px 2px #fff)}
+.eng-north-arrow{position:absolute;top:50%;right:18px;transform:translateY(-50%);z-index:1200;display:flex;align-items:center;flex-direction:column;pointer-events:none;filter:drop-shadow(0 1px 2px #fff)}
 .eng-north-arrow span{font-weight:900;color:#142d50;background:#fff;border-radius:3px;padding:0 5px}
+#engNorthNeedle{transform-origin:50% 50%;transition:transform .12s ease}
+.eng-north-arrow{background:#ffffffed;border:1px solid #64748b;border-radius:9px;padding:6px 5px;box-shadow:0 2px 9px #0003}
+.eng-map-scale{position:absolute;bottom:32px;left:50%;transform:translateX(-50%);z-index:1200;pointer-events:none;background:#ffffffeb;border:1px solid #64748b;border-radius:8px;padding:7px 13px 5px;text-align:center;box-shadow:0 2px 9px #0003;min-width:135px}
+.eng-map-scale-title{font:700 10px Segoe UI,sans-serif;letter-spacing:.08em;color:#334155}
+.eng-map-scale-bar{height:10px;display:flex;border:2px solid #142d50;margin:5px auto 2px}
+.eng-map-scale-bar i{display:block;flex:1;background:#142d50}
+.eng-map-scale-bar i+i{background:#fff}
+.eng-map-scale-label{font:700 12px Segoe UI,sans-serif;color:#142d50}
+.eng-utm-label{background:#ffffffdc;color:#174568;border:1px solid #77a5c5;border-radius:3px;padding:1px 3px;white-space:nowrap;font:700 10px Segoe UI,sans-serif;box-shadow:0 1px 2px #0002}
 .eng-bearing-label{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:700;color:#1e3a5f}
 .eng-bearing-label input{width:110px;accent-color:#175fa9}
 #engPlanPanel.eng-plan-expanded{position:fixed;inset:8px;z-index:10000;margin:0;display:flex;flex-direction:column;box-shadow:0 10px 45px #0006}
@@ -372,7 +381,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;
       <div class="profile-stats"><div class="profile-stat"><b id="engLength">—</b><span>Route length</span></div><div class="profile-stat"><b id="engSamples">—</b><span>Samples</span></div><div class="profile-stat"><b id="engCrossingsCount">—</b><span>Crossings</span></div><div class="profile-stat"><b id="engElevationRange">—</b><span>Ground RL range</span></div></div>
       <div id="engPlanPanel">
         <div class="eng-plan-bar"><div><strong>Pipeline Planimetry — Satellite View</strong><div class="small">Actual route coordinates · same chainage direction as ground profile</div></div><div class="tools"><button type="button" id="engPlanFit" class="secondary">Fit selected chainage</button><button type="button" id="engPlanGrid" class="secondary" aria-pressed="true">UTM grid: On</button><button type="button" id="engPlanAlign" class="secondary">Align pipeline</button><label class="eng-bearing-label">Rotation <input id="engPlanBearing" type="range" min="-180" max="180" step="1" value="0" aria-label="Rotate plan map"><output id="engPlanBearingValue">0°</output></label><button type="button" id="engPlanReset" class="secondary">North up</button><button type="button" id="engPlanExpand" class="secondary">Maximize map</button><button type="button" id="engPlanGoogle" class="secondary">Google Earth ↗</button></div></div>
-        <div class="eng-map-wrap"><div id="engPlanMap" aria-label="Engineering pipeline planimetry satellite map"></div><div class="eng-north-arrow" id="engNorthArrow" title="True north"><span> N </span><svg viewBox="0 0 36 52" width="36" height="52" aria-hidden="true"><path d="M18 2 L32 47 L18 36 L4 47 Z" fill="#fff" stroke="#172554" stroke-width="2"/><path d="M18 2 L18 36 L4 47 Z" fill="#172554"/></svg></div></div>
+        <div class="eng-map-wrap"><div id="engPlanMap" aria-label="Engineering pipeline planimetry satellite map"></div><div class="eng-north-arrow" id="engNorthArrow" title="True north"><span> N </span><div id="engNorthNeedle"><svg viewBox="0 0 36 52" width="36" height="52" aria-hidden="true"><path d="M18 2 L32 47 L18 36 L4 47 Z" fill="#fff" stroke="#172554" stroke-width="2"/><path d="M18 2 L18 36 L4 47 Z" fill="#172554"/></svg></div></div><div class="eng-map-scale" id="engMapScale"><div class="eng-map-scale-title">MAP SCALE</div><div class="eng-map-scale-bar" id="engMapScaleBar"><i></i><i></i></div><div class="eng-map-scale-label" id="engMapScaleLabel">—</div></div></div>
         <div class="eng-plan-footer"><span class="eng-plan-key"><i style="background:#dc2626"></i>Pipeline centerline</span><span class="eng-plan-key"><i style="background:#e97808"></i>Road</span><span class="eng-plan-key"><i style="background:#1769ef"></i>Cable</span><span class="eng-plan-key"><i style="background:#8b38da"></i>Fence / Trench</span><span class="eng-plan-key"><i style="background:#64748b"></i>Unknown</span><span id="engPlanStatus">Generate profile to load planimetry.</span></div>
       </div>
       <div id="engStripPanel" style="margin:12px 0;border:1px solid #d7dfeb;border-radius:10px;padding:12px;background:#fff">
@@ -1383,7 +1392,7 @@ qcUpdateControls();
   // The API returns easting/northing for the DEM samples. Convert those
   // projected coordinates to WGS84 for Leaflet; do not change route stationing.
   let planMap=null,planGroup=null,planGrid=null,planExtent=null,planRouteLL=null;
-  const setPlanBearing=(degrees)=>{const b=Math.max(-180,Math.min(180,Number(degrees)||0));if(planMap&&typeof planMap.setBearing==='function'){planMap.setBearing(b);el('engPlanBearing').value=String(Math.round(b));el('engPlanBearingValue').textContent=Math.round(b)+'°';el('engNorthArrow').style.transform='rotate('+(-b)+'deg)';}else{el('engPlanBearingValue').textContent='Rotation plugin unavailable';}};
+  const setPlanBearing=(degrees)=>{const b=Math.max(-180,Math.min(180,Number(degrees)||0));if(planMap&&typeof planMap.setBearing==='function'){planMap.setBearing(b);el('engPlanBearing').value=String(Math.round(b));el('engPlanBearingValue').textContent=Math.round(b)+'°';el('engNorthNeedle').style.transform='rotate('+(-b)+'deg)';}else{el('engPlanBearingValue').textContent='Rotation plugin unavailable';}};
   if(typeof proj4==='function'){
     proj4.defs('EPSG:32639','+proj=utm +zone=39 +datum=WGS84 +units=m +no_defs');
     proj4.defs('EPSG:32640','+proj=utm +zone=40 +datum=WGS84 +units=m +no_defs');
@@ -1391,6 +1400,16 @@ qcUpdateControls();
     proj4.defs('EPSG:27040','+proj=utm +zone=40 +a=6378249.145 +rf=293.465 +units=m +no_defs');
   }
   const planColors=c=>{const d=String(c.description??'').toLowerCase();return /road|track|highway|plant/.test(d)?'#e97808':/cable|electrical|fiber|telecom/.test(d)?'#1769ef':/trench|fence/.test(d)?'#8b38da':/n\/?a|unknown/.test(d)?'#64748b':'#df3046';};
+    const updatePlanScale=()=>{
+      if(!planMap)return;
+      const center=planMap.getCenter(),zoom=planMap.getZoom();
+      const metresPerPixel=40075016.686*Math.cos(center.lat*Math.PI/180)/Math.pow(2,zoom+8);
+      const candidates=[1,2,5,10,20,25,50,100,200,250,500,1000,2000,5000,10000,20000];
+      const distance=candidates.filter(v=>v/metresPerPixel<=180).pop()||1;
+      const px=Math.max(12,Math.round(distance/metresPerPixel));
+      el('engMapScaleBar').style.width=px+'px';
+      el('engMapScaleLabel').textContent=distance>=1000?(distance/1000)+' km':distance+' m';
+    };
   const ensurePlanMap=()=>{
     if(planMap)return;
     planMap=L.map('engPlanMap',{preferCanvas:true,zoomControl:true,rotate:true,bearing:0});
@@ -1400,6 +1419,7 @@ qcUpdateControls();
     L.control.scale({imperial:false,metric:true,position:'bottomleft'}).addTo(planMap);
     planGroup=L.layerGroup().addTo(planMap);planGrid=L.layerGroup().addTo(planMap);
     planMap.setView([24.45,54.38],8);
+    planMap.on('zoomend moveend resize',updatePlanScale);updatePlanScale();
     el('engPlanBearing').addEventListener('input',e=>setPlanBearing(e.target.value));
     el('engPlanReset').addEventListener('click',()=>setPlanBearing(0));
     el('engPlanAlign').addEventListener('click',()=>{
@@ -1486,8 +1506,22 @@ qcUpdateControls();
       const a=toLL({x:minX-pad,y}),b=toLL({x:maxX+pad,y});
       L.polyline([a,b],{color:'#5ca2d0',weight:.7,opacity:.52,interactive:false}).addTo(planGrid);
     }
+    // Coordinate labels remain anchored to the corresponding UTM grid lines.
+    // Display on the map itself, including when the map is rotated.
+    const gridLabel=(text,point)=>{
+      const pos=toLL(point);
+      L.marker(pos,{interactive:false,keyboard:false,zIndexOffset:150,
+        icon:L.divIcon({className:'',html:'<span class="eng-utm-label">'+safe(text)+'</span>',iconSize:[90,17],iconAnchor:[4,9]})
+      }).addTo(planGrid);
+    };
+    for(let x=Math.floor((minX-pad)/gridStep)*gridStep;x<=maxX+pad;x+=gridStep){
+      gridLabel('E '+Math.round(x).toLocaleString('en-US'),{x,y:maxY+pad*.72});
+    }
+    for(let y=Math.floor((minY-pad)/gridStep)*gridStep;y<=maxY+pad;y+=gridStep){
+      gridLabel('N '+Math.round(y).toLocaleString('en-US'),{x:minX-pad*.92,y});
+    }
     planExtent=L.latLngBounds(ll);
-    planMap.invalidateSize();planMap.fitBounds(planExtent.pad(.15),{maxZoom:19});
+    planMap.invalidateSize();planMap.fitBounds(planExtent.pad(.15),{maxZoom:19});updatePlanScale();
     el('engPlanStatus').textContent='CH '+kp(start)+'–'+kp(end)+' · '+cr.length+' crossings · '+epsg+' · Esri satellite · rotate/align available · Google Earth opens separately';
   };
 
